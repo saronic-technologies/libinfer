@@ -1,0 +1,18 @@
+[package]
+name = "libinfer"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "libinfer"
+
+[dependencies]
+cxx = "1.0.116"
+approx = "0.5.1"
+
+[build-dependencies]
+cmake = "0.1.50"
+pkg-config = "0.3.30"
+cxx-build = "1.0.116"
