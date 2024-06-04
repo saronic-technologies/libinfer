@@ -58,6 +58,12 @@ pub mod ffi {
         /// The maximum allowable batch size.
         /// Only 1 is currently allowed.
         max_batch_size: i32,
+
+        /// Optional DLA core to assign this engine to.
+        /// An error will be thrown if the index provided is less
+        /// than the number of cores available on the platform.
+        /// A negative number indicates that a DLA core is not to be used.
+        dla_core: i32,
     }
 
     unsafe extern "C++" {

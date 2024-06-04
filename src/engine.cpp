@@ -67,7 +67,8 @@ Engine::Engine(const Options &options)
       kPrecision(static_cast<uint8_t>(options.precision)),
       kDeviceIndex(options.device_index),
       kOptBatchSize(options.optimized_batch_size),
-      kMaxBatchSize(options.max_batch_size) {
+      kMaxBatchSize(options.max_batch_size),
+      kDlaCore(options.dla_core) {
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -181,6 +182,17 @@ void Engine::build() {
       std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
   if (!config) {
     throw std::runtime_error("Could not create builder config");
+  }
+
+  if (kDlaCore > 0) {
+    if (builder->getNbDLACores() >= kDlaCore) {
+      config->setFlag(nvinfer1::BuilderFlag::kGPU_FALLBACK);
+      config->setDefaultDeviceType(nvinfer1::DeviceType::kDLA);
+      config->setDLACore(kDlaCore);
+    }
+    else {
+      throw std::runtime_error("Not enough DLA cores for configured value: " + std::to_string(kDlaCore));
+    }
   }
 
   // Register a single optimization profile
@@ -422,6 +434,10 @@ std::string Engine::serializeEngineOptions(const Options &options) {
     canonicalName += "_fp32";
   } else {
     canonicalName += "_int8";
+  }
+
+  if (options.dla_core > 0) {
+    canonicalName += "_dl" + std::to_string(options.dla_core);
   }
 
   canonicalName += ".engine";

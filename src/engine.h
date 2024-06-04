@@ -108,6 +108,7 @@ private:
   const uint32_t kDeviceIndex;
   const int32_t kOptBatchSize;
   const int32_t kMaxBatchSize;
+  const int32_t kDlaCore;
 };
 
 // Rust friends.

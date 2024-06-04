@@ -103,7 +103,8 @@ fn main() {
         device_index: 0,
         precision: Precision::FP16,
         optimized_batch_size: 1,
-        max_batch_size: 1
+        max_batch_size: 1,
+        dla_core: -1
     };
     let engine = make_engine(&options).unwrap();
 
