@@ -59,14 +59,39 @@ fn test_output_dim(engine: &UniquePtr<Engine>) {
 }
 
 fn test_output_features(engine: &UniquePtr<Engine>) {
-    let input = read_binary_f32("test/input.bin".into());
+    let batch_size = get_input_dim(&engine)[0] - 1;
+    let input = {
+        let mut v = read_binary_f32("test/input.bin".into());
+        if batch_size > 0 {
+            let c = v.clone();
+            v.extend(
+                std::iter::repeat(&c)
+                    .take(batch_size as usize)
+                    .flat_map(|v| v.iter().cloned())
+            );
+        }
+        v
+    };
+    let expected = {
+        let mut v = parse_file_to_float_vec("test/features.txt".into()); 
+        if batch_size > 0 {
+            let c = v.clone();
+            v.extend(
+                std::iter::repeat(&c)
+                    .take(batch_size as usize)
+                    .flat_map(|v| v.iter().cloned())
+            );
+        }
+        v
+    };
+
     let actual = run_inference(&engine, &input).unwrap();
-    let expected = parse_file_to_float_vec("test/features.txt".into());
     let _ = zip(actual, expected).map(|(a, e)| relative_eq!(a, e, epsilon = 0.001));
 }
 
-fn benchmark_inference(engine: &UniquePtr<Engine>) {
+fn benchmark_inference(engine: &UniquePtr<Engine>, num_runs: u64) {
     let input_dim = get_input_dim(&engine);
+    let batch_size = input_dim[0];
     let input_len = input_dim.iter().fold(1, |acc, &e| acc * e) as usize;
     let input_data: Vec<f32> = repeat(0.0).take(input_len).collect();
 
@@ -77,8 +102,8 @@ fn benchmark_inference(engine: &UniquePtr<Engine>) {
     }
 
     // Measure.
-    println!("Testing inference...");
-    let latencies = (0..1 << 12)
+    println!("Beginning {num_runs} inference runs...");
+    let latencies = (0..num_runs)
         .map(|_| {
             let start = Instant::now();
             let _output = run_inference(&engine, &input_data).unwrap();
@@ -86,18 +111,24 @@ fn benchmark_inference(engine: &UniquePtr<Engine>) {
         })
         .collect::<Vec<Duration>>();
 
-    let average_latency =
-        latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>() / latencies.len() as f32;
-    let average_framerate = 1.0 / average_latency;
+    let total_latency = latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>();
+    let average_batch_latency = total_latency / latencies.len() as f32;
+    let average_batch_framerate = 1.0 / average_batch_latency;
+    let average_frame_latency = total_latency / (latencies.len() as f32 * batch_size as f32);
+    let average_frame_framerate = 1.0 / average_frame_latency;
 
-    println!("inference calls: {}", 2 << 15);
-    println!("avg. latency   : {}", average_latency);
-    println!("avg. fps       : {}", average_framerate);
+    println!("inference calls    : {}", num_runs);
+    println!("total latency      : {}", total_latency);
+    println!("avg. frame latency : {}", average_frame_latency);
+    println!("avg. frame fps     : {}", average_frame_framerate);
+    println!("avg. batch latency : {}", average_batch_latency);
+    println!("avg. batch fps     : {}", average_batch_framerate);
 }
 
 /// Benchmark inference engine.
 fn main() {
-    let options = Options {
+    let n = 2 << 15;
+    let b1_options = Options {
         model_name: "yolov8n_b1".into(),
         search_path: "test".into(),
         save_path: "test".into(),
@@ -106,47 +137,51 @@ fn main() {
         optimized_batch_size: 1,
         max_batch_size: 1
     };
-    let engine = make_engine(&options).unwrap();
+    let b1_engine = make_engine(&b1_options).unwrap();
 
-    test_input_dim(&engine);
-    test_output_dim(&engine);
-    test_output_features(&engine);
-    benchmark_inference(&engine);
-
+    test_input_dim(&b1_engine);
+    test_output_dim(&b1_engine);
+    
     let b2_options = Options {
         model_name: "yolov8n_b2".into(),
         optimized_batch_size: 2,
         max_batch_size: 2,
-        ..options.clone()
+        ..b1_options.clone()
     };
     let b2_engine = make_engine(&b2_options).unwrap();
-    benchmark_inference(&b2_engine);
 
     let b4_options = Options {
         model_name: "yolov8n_b4".into(),
         optimized_batch_size: 4,
         max_batch_size: 4,
-        ..options.clone()
+        ..b1_options.clone()
     };
     let b4_engine = make_engine(&b4_options).unwrap();
-    benchmark_inference(&b4_engine);
 
     let b8_options = Options {
         model_name: "yolov8n_b8".into(),
         optimized_batch_size: 8,
         max_batch_size: 8,
-        ..options.clone()
+        ..b1_options.clone()
     };
     let b8_engine = make_engine(&b8_options).unwrap();
-    benchmark_inference(&b8_engine);
 
 
     let b16_options = Options {
         model_name: "yolov8n_b16".into(),
         optimized_batch_size: 16,
         max_batch_size: 16,
-        ..options.clone()
+        ..b1_options.clone()
     };
     let b16_engine = make_engine(&b16_options).unwrap();
-    benchmark_inference(&b16_engine);
+
+    test_output_features(&b1_engine);
+    test_output_features(&b4_engine);
+
+    benchmark_inference(&b1_engine, n);
+    benchmark_inference(&b2_engine, n / 2);
+    benchmark_inference(&b4_engine, n / 4);
+    benchmark_inference(&b8_engine, n / 8);
+    benchmark_inference(&b16_engine, n / 16);
+
 }
