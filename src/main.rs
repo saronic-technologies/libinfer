@@ -5,7 +5,9 @@
 
 use approx::relative_eq;
 use cxx::UniquePtr;
-use libinfer::ffi::{get_input_dim, get_output_dim, make_engine, run_inference, Engine, Options, Precision};
+use libinfer::ffi::{
+    get_input_dim, get_output_dim, make_engine, run_inference, Engine, Options, Precision,
+};
 use std::fs::File;
 use std::io::Read;
 use std::io::{BufRead, BufReader};
@@ -67,19 +69,19 @@ fn test_output_features(engine: &UniquePtr<Engine>) {
             v.extend(
                 std::iter::repeat(&c)
                     .take(batch_size as usize)
-                    .flat_map(|v| v.iter().cloned())
+                    .flat_map(|v| v.iter().cloned()),
             );
         }
         v
     };
     let expected = {
-        let mut v = parse_file_to_float_vec("test/features.txt".into()); 
+        let mut v = parse_file_to_float_vec("test/features.txt".into());
         if batch_size > 0 {
             let c = v.clone();
             v.extend(
                 std::iter::repeat(&c)
                     .take(batch_size as usize)
-                    .flat_map(|v| v.iter().cloned())
+                    .flat_map(|v| v.iter().cloned()),
             );
         }
         v
@@ -135,13 +137,13 @@ fn main() {
         device_index: 0,
         precision: Precision::FP16,
         optimized_batch_size: 1,
-        max_batch_size: 1
+        max_batch_size: 1,
     };
     let b1_engine = make_engine(&b1_options).unwrap();
 
     test_input_dim(&b1_engine);
     test_output_dim(&b1_engine);
-    
+
     let b2_options = Options {
         model_name: "yolov8n_b2".into(),
         optimized_batch_size: 2,
@@ -166,7 +168,6 @@ fn main() {
     };
     let b8_engine = make_engine(&b8_options).unwrap();
 
-
     let b16_options = Options {
         model_name: "yolov8n_b16".into(),
         optimized_batch_size: 16,
@@ -183,5 +184,4 @@ fn main() {
     benchmark_inference(&b4_engine, n / 4);
     benchmark_inference(&b8_engine, n / 8);
     benchmark_inference(&b16_engine, n / 16);
-
 }

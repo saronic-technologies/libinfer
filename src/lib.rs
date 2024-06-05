@@ -30,7 +30,7 @@ pub mod ffi {
         /// Where `device_name` is the `name` property of the CUDA device
         /// specified by `device_index`.
         ///
-        /// The engine file must match this name exactly to help ensure that only 
+        /// The engine file must match this name exactly to help ensure that only
         /// engines which have been built for the specific device are used.
         ///
         /// If an appropriate engine file is not found here or in `save_path`
@@ -87,9 +87,9 @@ pub mod ffi {
 
         /// Run inference on an input batch.
         ///
-        /// The input batch dimension is dependent on whether the engine has been built with fixed 
-        /// or dynamic input batch sizes. If fixed, the input batch dimensions 
-        /// must match the value returned by `get_input_dim`. Dynamic may accept any input batch size. 
+        /// The input batch dimension is dependent on whether the engine has been built with fixed
+        /// or dynamic input batch sizes. If fixed, the input batch dimensions
+        /// must match the value returned by `get_input_dim`. Dynamic may accept any input batch size.
         ///
         /// The input vector must be a flattened representation of shape
         /// `get_input_dim` with appropriate batch dimension. Likewise, the output dimension will
