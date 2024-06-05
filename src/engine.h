@@ -60,6 +60,7 @@ public:
 
   rust::Vec<uint32_t> getInputDims() const {
     rust::Vec<uint32_t> rv;
+    rv.push_back(mInputBatchSize);
     for (int i = 0; i < 3; ++i) {
       rv.push_back(mInputDims[0].d[i]);
     }

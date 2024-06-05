@@ -52,11 +52,11 @@ pub mod ffi {
         precision: Precision,
 
         /// The batch size which should be optimized for.
-        /// Only 1 is currently allowed.
         optimized_batch_size: i32,
 
         /// The maximum allowable batch size.
-        /// Only 1 is currently allowed.
+        /// If the provided onnx network has a fixed batch size,
+        /// then `optimized_batch_size` and `max_batch_size` must be equal.
         max_batch_size: i32,
     }
 
@@ -69,20 +69,31 @@ pub mod ffi {
         fn make_engine(options: &Options) -> Result<UniquePtr<Engine>>;
 
         /// Return the input dimensions of the engine.
-        /// Values are in CHW order.
-        /// Note: batch dimension is implicitly always 1 in the current implementation.
+        /// For image inputs, values are in BCHW order.
+        /// A value of -1 in the batch dimension indicates the engine may accept a
+        /// dynamic batch size.
         fn get_input_dim(engine: &UniquePtr<Engine>) -> Vec<u32>;
 
         /// Return output dimensions of the network.
-        /// The meaning of these dimensions is dependant on the network definition.
+        /// The meaning of these dimensions is dependent on the network definition,
+        /// but the batch dimension always comes first.
+        /// A value of -1 in the batch dimension indicates the engine has dynamic batch size
+        /// enabled and will the output will have a batch dimension equal to the input value.
         fn get_output_dim(engine: &UniquePtr<Engine>) -> Vec<u32>;
 
         /// Return the expected length of the output feature vector.
-        /// This is equivalent to multiplying the outputs of `get_output_dim`.
+        /// This is equivalent to multiplying the elements of `get_output_dim`.
         fn get_output_len(engine: &UniquePtr<Engine>) -> u32;
 
-        /// Run inference on an input vector.
-        /// This vector should be a flattened representation of `get_input_dim`, in CHW order.
+        /// Run inference on an input batch.
+        ///
+        /// The input batch dimension is dependent on whether the engine has been built with fixed 
+        /// or dynamic input batch sizes. If fixed, the input batch dimensions 
+        /// must match the value returned by `get_input_dim`. Dynamic may accept any input batch size. 
+        ///
+        /// The input vector must be a flattened representation of shape
+        /// `get_input_dim` with appropriate batch dimension. Likewise, the output dimension will
+        /// be of shape `get_output_dim` with batch dimension equal to input batch dimension.
         fn run_inference(engine: &UniquePtr<Engine>, input: &Vec<f32>) -> Result<Vec<f32>>;
     }
 }

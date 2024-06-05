@@ -45,9 +45,10 @@ fn parse_file_to_float_vec(path: PathBuf) -> Vec<f32> {
 
 fn test_input_dim(engine: &UniquePtr<Engine>) {
     let input_dim = get_input_dim(&engine);
-    assert_eq!(input_dim[0], 3);
-    assert_eq!(input_dim[1], 640);
+    assert_eq!(input_dim[0], 1);
+    assert_eq!(input_dim[1], 3);
     assert_eq!(input_dim[2], 640);
+    assert_eq!(input_dim[3], 640);
 }
 
 fn test_output_dim(engine: &UniquePtr<Engine>) {
@@ -97,8 +98,8 @@ fn benchmark_inference(engine: &UniquePtr<Engine>) {
 /// Benchmark inference engine.
 fn main() {
     let options = Options {
-        model_name: "yolov8n".into(),
-        search_path: "tmp".into(),
+        model_name: "yolov8n_b1".into(),
+        search_path: "test".into(),
         save_path: "test".into(),
         device_index: 0,
         precision: Precision::FP16,
@@ -111,4 +112,41 @@ fn main() {
     test_output_dim(&engine);
     test_output_features(&engine);
     benchmark_inference(&engine);
+
+    let b2_options = Options {
+        model_name: "yolov8n_b2".into(),
+        optimized_batch_size: 2,
+        max_batch_size: 2,
+        ..options.clone()
+    };
+    let b2_engine = make_engine(&b2_options).unwrap();
+    benchmark_inference(&b2_engine);
+
+    let b4_options = Options {
+        model_name: "yolov8n_b4".into(),
+        optimized_batch_size: 4,
+        max_batch_size: 4,
+        ..options.clone()
+    };
+    let b4_engine = make_engine(&b4_options).unwrap();
+    benchmark_inference(&b4_engine);
+
+    let b8_options = Options {
+        model_name: "yolov8n_b8".into(),
+        optimized_batch_size: 8,
+        max_batch_size: 8,
+        ..options.clone()
+    };
+    let b8_engine = make_engine(&b8_options).unwrap();
+    benchmark_inference(&b8_engine);
+
+
+    let b16_options = Options {
+        model_name: "yolov8n_b16".into(),
+        optimized_batch_size: 16,
+        max_batch_size: 16,
+        ..options.clone()
+    };
+    let b16_engine = make_engine(&b16_options).unwrap();
+    benchmark_inference(&b16_engine);
 }
