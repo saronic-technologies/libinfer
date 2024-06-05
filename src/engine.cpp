@@ -165,15 +165,15 @@ void Engine::build() {
     doesSupportDynamicBatch = true;
     spdlog::info("Model supports dynamic batch size");
   } else {
-    spdlog::info("Model only supports fixed batch size of {}", input0Batch);
+    spdlog::info("Model requires fixed batch size of {}", input0Batch);
     // If the model supports a fixed batch size, ensure that the maxBatchSize
     // and optBatchSize were set correctly.
     if (kOptBatchSize != input0Batch || kMaxBatchSize != input0Batch) {
       throw std::runtime_error(
-          "Error, model only supports a fixed batch size of " +
+          "Error, model requires a fixed batch size of " +
           std::to_string(input0Batch) +
           ". Must set Options.optimized_batch_size and Options.max_batch_size "
-          "to 1");
+          "to this value.");
     }
   }
 
@@ -195,18 +195,17 @@ void Engine::build() {
     int32_t inputW = inputDims.d[3];
 
     // Specify the optimization profile.
-    // TODO batch size fixed to 1.
     if (doesSupportDynamicBatch) {
       optProfile->setDimensions(inputName, OptProfileSelector::kMIN,
                                 Dims4(1, inputC, inputH, inputW));
     } else {
       optProfile->setDimensions(inputName, OptProfileSelector::kMIN,
-                                Dims4(1, inputC, inputH, inputW));
+                                Dims4(kOptBatchSize, inputC, inputH, inputW));
     }
     optProfile->setDimensions(inputName, OptProfileSelector::kOPT,
-                              Dims4(1, inputC, inputH, inputW));
+                              Dims4(kOptBatchSize, inputC, inputH, inputW));
     optProfile->setDimensions(inputName, OptProfileSelector::kMAX,
-                              Dims4(1, inputC, inputH, inputW));
+                              Dims4(kMaxBatchSize, inputC, inputH, inputW));
   }
   config->addOptimizationProfile(optProfile);
 
@@ -313,7 +312,8 @@ void Engine::load() {
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
       checkCudaErrorCode(cudaMallocAsync(&mBuffers[i],
-                                         tensorShape.d[1] * tensorShape.d[2] *
+                                         tensorShape.d[0] * tensorShape.d[1] *
+                                             tensorShape.d[2] *
                                              tensorShape.d[3] * sizeof(float),
                                          stream));
 
@@ -334,7 +334,8 @@ void Engine::load() {
 
       mOutputLengths.push_back(outputLenFloat);
       checkCudaErrorCode(cudaMallocAsync(
-          &mBuffers[i], outputLenFloat * sizeof(float), stream));
+          &mBuffers[i], outputLenFloat * kMaxBatchSize * sizeof(float),
+          stream));
     } else {
       throw std::runtime_error(
           "Error, IO Tensor is neither an input or output!");
@@ -353,9 +354,31 @@ rust::Vec<float> Engine::infer(const rust::Vec<float> &input) {
 
   const auto &dims = mInputDims[0];
 
+  // Check that the passed batch size can be handled.
+  const int32_t calculatedBatchSize =
+      input.size() / (dims.d[0] * dims.d[1] * dims.d[2]);
+  if (calculatedBatchSize > kMaxBatchSize) {
+    throw std::runtime_error(
+        "Input exceeds max batch size: " + std::to_string(calculatedBatchSize) +
+        " > " + std::to_string(kMaxBatchSize));
+  }
+
+  // If the network's batch size is fixed, the input batch dimension must match.
+  if (mInputBatchSize != -1 && calculatedBatchSize != mInputBatchSize) {
+    throw std::runtime_error(
+        "Input batch size does not match required fixed batch size: " +
+        std::to_string(calculatedBatchSize) +
+        " != " + std::to_string(kOptBatchSize));
+  }
+
+  // Check that vector has enough elements for full input.
+  if (input.size() % (dims.d[0] * dims.d[1] * dims.d[2]) != 0) {
+    throw std::runtime_error("Input vector incorrectly sized");
+  }
+
   // Define the batch size.
-  // TODO: batch size fixed to 1 for now.
-  nvinfer1::Dims4 inputDims = {1, dims.d[0], dims.d[1], dims.d[2]};
+  nvinfer1::Dims4 inputDims = {calculatedBatchSize, dims.d[0], dims.d[1],
+                               dims.d[2]};
   mContext->setInputShape(mIOTensorNames[0].c_str(), inputDims);
 
   checkCudaErrorCode(
@@ -423,6 +446,9 @@ std::string Engine::serializeEngineOptions(const Options &options) {
   } else {
     canonicalName += "_int8";
   }
+
+  canonicalName += "_b" + std::to_string(options.optimized_batch_size) + "m" +
+                   std::to_string(options.max_batch_size);
 
   canonicalName += ".engine";
 
