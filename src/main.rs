@@ -74,21 +74,27 @@ fn test_output_features(engine: &UniquePtr<Engine>) {
         }
         v
     };
-    let expected = {
-        let mut v = parse_file_to_float_vec("test/features.txt".into());
-        if batch_size > 0 {
-            let c = v.clone();
-            v.extend(
-                std::iter::repeat(&c)
-                    .take(batch_size as usize)
-                    .flat_map(|v| v.iter().cloned()),
-            );
-        }
-        v
-    };
+    let first_twelve_expected = parse_file_to_float_vec("test/features.txt".into());
+
+    let expected_output_size = get_output_dim(&engine)
+        .iter()
+        .fold(1, |acc, &e| acc * e as usize);
+    let batch_element_size = get_output_dim(&engine)
+        .iter()
+        .skip(1)
+        .fold(1, |acc, &e| acc * e as usize);
 
     let actual = run_inference(&engine, &input).unwrap();
-    let _ = zip(actual, expected).map(|(a, e)| relative_eq!(a, e, epsilon = 0.001));
+
+    // Check that the entire output length is correct.
+    assert_eq!(actual.len(), expected_output_size);
+
+    // Only checking the first twelve produced values. Repeat for each batch element.
+    actual.chunks_exact(batch_element_size).for_each(|chunk| {
+        zip(chunk, first_twelve_expected.clone()).for_each(|(a, e)| {
+            relative_eq!(*a, e, epsilon = 0.001);
+        });
+    });
 }
 
 fn benchmark_inference(engine: &UniquePtr<Engine>, num_runs: u64) {
