@@ -405,7 +405,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<float> &input) {
     throw std::runtime_error("enqueue failed");
   }
 
-  const auto outputLen = mOutputLengths[0];
+  const auto outputLen = calculatedBatchSize * mOutputLengths[0];
   rust::Vec<float> output;
   resize(output, outputLen);
   checkCudaErrorCode(cudaMemcpyAsync(
