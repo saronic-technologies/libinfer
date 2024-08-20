@@ -150,6 +150,17 @@ fn main() {
     test_input_dim(&b1_engine);
     test_output_dim(&b1_engine);
 
+    let dynamic_options = Options {
+        model_name: "clip".into(),
+        search_path: "test".into(),
+        save_path: "test".into(),
+        device_index: 0,
+        precision: Precision::FP16,
+        optimized_batch_size: 32,
+        max_batch_size: 128,
+    };
+    let dynamic_engine = make_engine(&dynamic_options).unwrap();
+
     let b2_options = Options {
         model_name: "yolov8n_b2".into(),
         optimized_batch_size: 2,
