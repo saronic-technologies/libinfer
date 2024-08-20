@@ -312,7 +312,7 @@ void Engine::load() {
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
       checkCudaErrorCode(cudaMallocAsync(&mBuffers[i],
-                                         tensorShape.d[0] * tensorShape.d[1] *
+                                         kMaxBatchSize * tensorShape.d[1] *
                                              tensorShape.d[2] *
                                              tensorShape.d[3] * sizeof(float),
                                          stream));
