@@ -34,7 +34,7 @@ let output = run_inference(&engine).unwrap();
 ...
 ```
 
-Most errors are surfaced back to Rust via `Result`s. `libinfer` also reads the `RUST_LOG` environment variable and translates it to TensorRT's logger. The default log level if `warn`.
+Most errors are surfaced back to Rust via `Result`s. `libinfer` also reads the `RUST_LOG` environment variable and translates it to TensorRT's logger. The default log level is `warn`.
 
 ## Current Limitations
 - Only tested with TensorRT 8.6
