@@ -2,6 +2,7 @@
 
 #include "NvInfer.h"
 #include <chrono>
+#include <cstdlib>
 #include <cuda_runtime.h>
 #include <fstream>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -15,9 +16,25 @@ class Logger : public nvinfer1::ILogger {
 public:
   nvinfer1::ILogger::Severity reportableSeverity;
 
-  explicit Logger(
-      nvinfer1::ILogger::Severity severity = nvinfer1::ILogger::Severity::kINFO)
-      : reportableSeverity(severity) {}
+  explicit Logger() {
+    const char *rustLogLevelEnvVar = "RUST_LOG";
+    const char *rustLogLevel = getenv(rustLogLevelEnvVar);
+    if (rustLogLevel == nullptr) {
+      reportableSeverity = nvinfer1::ILogger::Severity::kWARNING;
+    } else {
+
+      std::string rustLogLevelStr(rustLogLevel);
+      if (rustLogLevelStr == "error") {
+        reportableSeverity = nvinfer1::ILogger::Severity::kERROR;
+      } else if (rustLogLevelStr == "warn") {
+        reportableSeverity = nvinfer1::ILogger::Severity::kWARNING;
+      } else if (rustLogLevelStr == "info") {
+        reportableSeverity = nvinfer1::ILogger::Severity::kINFO;
+      } else if (rustLogLevelStr == "debug" || rustLogLevelStr == "trace") {
+        reportableSeverity = nvinfer1::ILogger::Severity::kVERBOSE;
+      }
+    }
+  }
 
   void log(nvinfer1::ILogger::Severity severity,
            const char *msg) noexcept override {
