@@ -34,11 +34,18 @@ let output = run_inference(&engine).unwrap();
 ...
 ```
 
+Most errors are surfaced back to Rust via `Result`s. `libinfer` also reads the `RUST_LOG` environment variable and translates it to TensorRT's logger. The default log level if `warn`.
+
 ## Current Limitations
-- Only batch size of 1 is currently supported
-- Only fp16 quantization is currently supported
+- Only tested with TensorRT 8.6
 - The underlying engine code is not threadsafe (and the Rust binding does not implement `Sync`)
 - Additional benchmarking and testing is desirable
+- Dynamic batching doesn't quite seem to work yet
+
+## Future Work
+- Update to TensorRT 10
+- Allow passing device pointers and CUDA streams for stream synchronization events
+- Provide better examples
 
 ## Credits
 Much of the C++ code is based on the [tensorrt-cpp-api](https://github.com/cyrusbehr/tensorrt-cpp-api) repo.

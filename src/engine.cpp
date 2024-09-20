@@ -71,6 +71,24 @@ Engine::Engine(const Options &options)
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
+
+    const char *rustLogLevelEnvVar = "RUST_LOG";
+    const char *rustLogLevel = getenv(rustLogLevelEnvVar);
+    if (rustLogLevel == nullptr) {
+      spdlog::set_level(spdlog::level::warn);
+    } else {
+
+      std::string rustLogLevelStr(rustLogLevel);
+      if (rustLogLevelStr == "error") {
+        spdlog::set_level(spdlog::level::err);
+      } else if (rustLogLevelStr == "warn") {
+        spdlog::set_level(spdlog::level::warn);
+      } else if (rustLogLevelStr == "info") {
+        spdlog::set_level(spdlog::level::info);
+      } else if (rustLogLevelStr == "debug" || rustLogLevelStr == "trace") {
+        spdlog::set_level(spdlog::level::debug);
+      }
+    }
   }
 }
 
@@ -235,7 +253,19 @@ void Engine::build() {
 
   // Write the engine to disk
   std::ofstream outfile(mEnginePath, std::ofstream::binary);
+  if (!outfile.is_open()) {
+    throw std::runtime_error("Could not open output file");
+  }
+
   outfile.write(reinterpret_cast<const char *>(plan->data()), plan->size());
+  if (outfile.fail()) {
+    throw std::runtime_error("Could not write engine file to disk");
+  }
+
+  outfile.close();
+  if (outfile.fail()) {
+    throw std::runtime_error("Could not close engine file");
+  }
 
   spdlog::info("Saved engine to {}", mEnginePath);
 
@@ -254,8 +284,15 @@ Engine::~Engine() {
 void Engine::load() {
   // Read the serialized model from disk
   std::ifstream file(mEnginePath, std::ios::binary | std::ios::ate);
+  if (!file.is_open()) {
+    throw std::runtime_error("Could not open engine file");
+  }
+
   std::streamsize size = file.tellg();
   file.seekg(0, std::ios::beg);
+  if (file.fail()) {
+    throw std::runtime_error("Failed to seek in engine file");
+  }
 
   std::vector<char> buffer(size);
   if (!file.read(buffer.data(), size)) {
@@ -311,11 +348,11 @@ void Engine::load() {
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
-      checkCudaErrorCode(cudaMallocAsync(&mBuffers[i],
-                                         kMaxBatchSize * tensorShape.d[1] *
-                                             tensorShape.d[2] *
-                                             tensorShape.d[3] * sizeof(float),
-                                         stream));
+      checkCudaErrorCode(
+          cudaMallocAsync(&mBuffers[i],
+                          kMaxBatchSize * tensorShape.d[1] * tensorShape.d[2] *
+                              tensorShape.d[3] * sizeof(float),
+                          stream));
 
       // Store the input dims for later use
       mInputDims.emplace_back(tensorShape.d[1], tensorShape.d[2],
