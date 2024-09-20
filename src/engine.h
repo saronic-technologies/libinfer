@@ -16,9 +16,7 @@ class Logger : public nvinfer1::ILogger {
 public:
   nvinfer1::ILogger::Severity reportableSeverity;
 
-  explicit Logger(
-      nvinfer1::ILogger::Severity severity = nvinfer1::ILogger::Severity::kINFO)
-      : reportableSeverity(severity) {
+  explicit Logger() {
     const char *rustLogLevelEnvVar = "RUST_LOG";
     const char *rustLogLevel = getenv(rustLogLevelEnvVar);
     if (rustLogLevel == nullptr) {
