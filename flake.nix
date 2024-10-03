@@ -19,6 +19,7 @@
         inherit (cudaPackages) cudatoolkit tensorrt cudnn cuda_cudart;
 
         inputs = with pkgs; [
+          bacon
           cmake
           cmake-format
           clang

@@ -1,20 +1,16 @@
 //! Simple program to run tests and benchmark for libinfer.
-//! Why is this a separate program and not a `cargo test`?
-//! Cargo shits the bed and fails to link correctly against the `tests` build target for some
-//! reason and I couldn't be bothered to figure out why. Probably some `build.rs` shit.
 
-use approx::relative_eq;
+use approx::assert_relative_eq;
 use cxx::UniquePtr;
-use libinfer::ffi::{
-    get_input_dim, get_output_dim, make_engine, run_inference, Engine, Options, Precision,
+use libinfer::{Engine, Options, Precision};
+use std::{
+    fs::File,
+    io::{BufRead, BufReader, Read},
+    iter::{repeat, zip},
+    path::PathBuf,
+    str::FromStr,
+    time::{Duration, Instant},
 };
-use std::fs::File;
-use std::io::Read;
-use std::io::{BufRead, BufReader};
-use std::iter::{repeat, zip};
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::time::{Duration, Instant};
 
 fn read_binary_f32(path: PathBuf) -> Vec<f32> {
     let mut f = File::open(path).unwrap();
@@ -46,7 +42,7 @@ fn parse_file_to_float_vec(path: PathBuf) -> Vec<f32> {
 }
 
 fn test_input_dim(engine: &UniquePtr<Engine>) {
-    let input_dim = get_input_dim(&engine);
+    let input_dim = engine.get_input_dims();
     assert_eq!(input_dim[0], 1);
     assert_eq!(input_dim[1], 3);
     assert_eq!(input_dim[2], 640);
@@ -54,14 +50,14 @@ fn test_input_dim(engine: &UniquePtr<Engine>) {
 }
 
 fn test_output_dim(engine: &UniquePtr<Engine>) {
-    let output_dim = get_output_dim(&engine);
+    let output_dim = engine.get_output_dims();
     assert_eq!(output_dim[0], 1);
     assert_eq!(output_dim[1], 84);
     assert_eq!(output_dim[2], 8400);
 }
 
-fn test_output_features(engine: &UniquePtr<Engine>) {
-    let batch_size = get_input_dim(&engine)[0] - 1;
+fn test_output_features(engine: &mut UniquePtr<Engine>) {
+    let batch_size = engine.get_input_dims()[0] - 1;
     let input = {
         let mut v = read_binary_f32("test/input.bin".into());
         if batch_size > 0 {
@@ -76,15 +72,17 @@ fn test_output_features(engine: &UniquePtr<Engine>) {
     };
     let first_twelve_expected = parse_file_to_float_vec("test/features.txt".into());
 
-    let expected_output_size = get_output_dim(&engine)
+    let expected_output_size = engine
+        .get_output_dims()
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
-    let batch_element_size = get_output_dim(&engine)
+    let batch_element_size = engine
+        .get_output_dims()
         .iter()
         .skip(1)
         .fold(1, |acc, &e| acc * e as usize);
 
-    let actual = run_inference(&engine, &input).unwrap();
+    let actual = engine.pin_mut().infer(&input).unwrap();
 
     // Check that the entire output length is correct.
     assert_eq!(actual.len(), expected_output_size);
@@ -92,13 +90,13 @@ fn test_output_features(engine: &UniquePtr<Engine>) {
     // Only checking the first twelve produced values. Repeat for each batch element.
     actual.chunks_exact(batch_element_size).for_each(|chunk| {
         zip(chunk, first_twelve_expected.clone()).for_each(|(a, e)| {
-            relative_eq!(*a, e, epsilon = 0.001);
+            assert_relative_eq!(*a, e, epsilon = 0.001);
         });
     });
 }
 
-fn benchmark_inference(engine: &UniquePtr<Engine>, num_runs: u64) {
-    let input_dim = get_input_dim(&engine);
+fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: u64) {
+    let input_dim = engine.get_input_dims();
     let batch_size = input_dim[0];
     let input_len = input_dim.iter().fold(1, |acc, &e| acc * e) as usize;
     let input_data: Vec<f32> = repeat(0.0).take(input_len).collect();
@@ -106,7 +104,7 @@ fn benchmark_inference(engine: &UniquePtr<Engine>, num_runs: u64) {
     // Warmup.
     println!("Warming up inference codepath...");
     for _ in 0..1024 {
-        let _output = run_inference(&engine, &input_data).unwrap();
+        let _output = engine.pin_mut().infer(&input_data).unwrap();
     }
 
     // Measure.
@@ -114,7 +112,7 @@ fn benchmark_inference(engine: &UniquePtr<Engine>, num_runs: u64) {
     let latencies = (0..num_runs)
         .map(|_| {
             let start = Instant::now();
-            let _output = run_inference(&engine, &input_data).unwrap();
+            let _output = engine.pin_mut().infer(&input_data).unwrap();
             start.elapsed()
         })
         .collect::<Vec<Duration>>();
@@ -145,7 +143,7 @@ fn main() {
         optimized_batch_size: 1,
         max_batch_size: 1,
     };
-    let b1_engine = make_engine(&b1_options).unwrap();
+    let mut b1_engine = Engine::new(&b1_options).unwrap();
 
     test_input_dim(&b1_engine);
     test_output_dim(&b1_engine);
@@ -159,7 +157,7 @@ fn main() {
         optimized_batch_size: 32,
         max_batch_size: 128,
     };
-    let dynamic_engine = make_engine(&dynamic_options).unwrap();
+    let dynamic_engine = Engine::new(&dynamic_options).unwrap();
 
     let b2_options = Options {
         model_name: "yolov8n_b2".into(),
@@ -167,7 +165,7 @@ fn main() {
         max_batch_size: 2,
         ..b1_options.clone()
     };
-    let b2_engine = make_engine(&b2_options).unwrap();
+    let mut b2_engine = Engine::new(&b2_options).unwrap();
 
     let b4_options = Options {
         model_name: "yolov8n_b4".into(),
@@ -175,7 +173,7 @@ fn main() {
         max_batch_size: 4,
         ..b1_options.clone()
     };
-    let b4_engine = make_engine(&b4_options).unwrap();
+    let mut b4_engine = Engine::new(&b4_options).unwrap();
 
     let b8_options = Options {
         model_name: "yolov8n_b8".into(),
@@ -183,7 +181,7 @@ fn main() {
         max_batch_size: 8,
         ..b1_options.clone()
     };
-    let b8_engine = make_engine(&b8_options).unwrap();
+    let mut b8_engine = Engine::new(&b8_options).unwrap();
 
     let b16_options = Options {
         model_name: "yolov8n_b16".into(),
@@ -191,14 +189,14 @@ fn main() {
         max_batch_size: 16,
         ..b1_options.clone()
     };
-    let b16_engine = make_engine(&b16_options).unwrap();
+    let mut b16_engine = Engine::new(&b16_options).unwrap();
 
-    test_output_features(&b1_engine);
-    test_output_features(&b4_engine);
+    test_output_features(&mut b1_engine);
+    test_output_features(&mut b4_engine);
 
-    benchmark_inference(&b1_engine, n);
-    benchmark_inference(&b2_engine, n / 2);
-    benchmark_inference(&b4_engine, n / 4);
-    benchmark_inference(&b8_engine, n / 8);
-    benchmark_inference(&b16_engine, n / 16);
+    benchmark_inference(&mut b1_engine, n);
+    benchmark_inference(&mut b2_engine, n / 2);
+    benchmark_inference(&mut b4_engine, n / 4);
+    benchmark_inference(&mut b8_engine, n / 8);
+    benchmark_inference(&mut b16_engine, n / 16);
 }

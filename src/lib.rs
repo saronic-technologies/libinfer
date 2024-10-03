@@ -72,18 +72,18 @@ pub mod ffi {
         /// For image inputs, values are in BCHW order.
         /// A value of -1 in the batch dimension indicates the engine may accept a
         /// dynamic batch size.
-        fn get_input_dim(engine: &UniquePtr<Engine>) -> Vec<u32>;
+        fn get_input_dims(self: &Engine) -> Vec<u32>;
 
         /// Return output dimensions of the network.
         /// The meaning of these dimensions is dependent on the network definition,
         /// but the batch dimension always comes first.
         /// A value of -1 in the batch dimension indicates the engine has dynamic batch size
         /// enabled and will the output will have a batch dimension equal to the input value.
-        fn get_output_dim(engine: &UniquePtr<Engine>) -> Vec<u32>;
+        fn get_output_dims(self: &Engine) -> Vec<u32>;
 
         /// Return the expected length of the output feature vector.
         /// This is equivalent to multiplying the elements of `get_output_dim`.
-        fn get_output_len(engine: &UniquePtr<Engine>) -> u32;
+        fn get_output_len(self: &Engine) -> u32;
 
         /// Run inference on an input batch.
         ///
@@ -94,7 +94,19 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_dim` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dim` with batch dimension equal to input batch dimension.
-        fn run_inference(engine: &UniquePtr<Engine>, input: &Vec<f32>) -> Result<Vec<f32>>;
+        fn infer(self: Pin<&mut Engine>, input: &Vec<f32>) -> Result<Vec<f32>>;
+    }
+}
+
+pub use crate::ffi::Engine;
+pub use crate::ffi::Options;
+pub use crate::ffi::Precision;
+
+use cxx::{Exception, UniquePtr};
+
+impl Engine {
+    pub fn new(options: &Options) -> Result<UniquePtr<Engine>, Exception> {
+        crate::ffi::make_engine(&options)
     }
 }
 

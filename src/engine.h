@@ -75,7 +75,7 @@ public:
   // Run inference and return output tensor.
   rust::Vec<float> infer(const rust::Vec<float> &input);
 
-  rust::Vec<uint32_t> getInputDims() const {
+  rust::Vec<uint32_t> get_input_dims() const {
     rust::Vec<uint32_t> rv;
     rv.push_back(mInputBatchSize);
     for (int i = 0; i < 3; ++i) {
@@ -84,7 +84,7 @@ public:
     return rv;
   };
 
-  rust::Vec<uint32_t> getOutputDims() const {
+  rust::Vec<uint32_t> get_output_dims() const {
     rust::Vec<uint32_t> rv;
     for (int i = 0; i < 3; ++i) {
       rv.push_back(mOutputDims[0].d[i]);
@@ -92,7 +92,7 @@ public:
     return rv;
   };
 
-  uint32_t getOutputLen() const { return mOutputLengths[0]; }
+  uint32_t get_output_len() const { return mOutputLengths[0]; }
 
 private:
   // Converts the engine options into a string.
@@ -130,10 +130,3 @@ private:
 
 // Rust friends.
 std::unique_ptr<Engine> make_engine(const Options &options);
-
-rust::Vec<float> run_inference(const std::unique_ptr<Engine> &engine,
-                               const rust::Vec<float> &input);
-
-rust::Vec<uint32_t> get_input_dim(const std::unique_ptr<Engine> &engine);
-rust::Vec<uint32_t> get_output_dim(const std::unique_ptr<Engine> &engine);
-uint32_t get_output_len(const std::unique_ptr<Engine> &engine);
