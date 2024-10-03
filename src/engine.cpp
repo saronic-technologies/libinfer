@@ -20,23 +20,6 @@ std::unique_ptr<Engine> make_engine(const Options &options) {
   return engine;
 }
 
-rust::Vec<float> run_inference(const std::unique_ptr<Engine> &engine,
-                               const rust::Vec<float> &input) {
-  return engine->infer(input);
-}
-
-rust::Vec<uint32_t> get_input_dim(const std::unique_ptr<Engine> &engine) {
-  return engine->getInputDims();
-}
-
-rust::Vec<uint32_t> get_output_dim(const std::unique_ptr<Engine> &engine) {
-  return engine->getOutputDims();
-}
-
-uint32_t get_output_len(const std::unique_ptr<Engine> &engine) {
-  return engine->getOutputLen();
-}
-
 // A few utility functions
 static inline void checkCudaErrorCode(cudaError_t code) {
   if (code != 0) {
