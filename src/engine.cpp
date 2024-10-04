@@ -352,9 +352,9 @@ void Engine::load() {
         outputLenFloat *= tensorShape.d[j];
       }
 
-      mOutputLengths.push_back(outputLenFloat);
+      mOutputLengths.put8_sh_back(outputLenFloat);
       checkCudaErrorCode(cudaMallocAsync(
-          &mBuffers[i], outputLenFloat * kMaxBatchSize * sizeof(float),
+          &mBuffers[i], outputLenFloat * kMaxBatchSize * sizeof(uint8_t),
           stream));
     } else {
       throw std::runtime_error(
