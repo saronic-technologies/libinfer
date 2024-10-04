@@ -367,7 +367,7 @@ void Engine::load() {
   checkCudaErrorCode(cudaStreamDestroy(stream));
 }
 
-rust::Vec<float> Engine::infer(const rust::Vec<float> &input) {
+rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   // Create the cuda stream that will be used for inference
   cudaStream_t inferenceCudaStream;
   checkCudaErrorCode(cudaStreamCreate(&inferenceCudaStream));
@@ -402,7 +402,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<float> &input) {
   mContext->setInputShape(mIOTensorNames[0].c_str(), inputDims);
 
   checkCudaErrorCode(
-      cudaMemcpyAsync(mBuffers[0], input.data(), input.size() * sizeof(float),
+      cudaMemcpyAsync(mBuffers[0], input.data(), input.size() * sizeof(uint8_t),
                       cudaMemcpyHostToDevice, inferenceCudaStream));
 
   // Ensure all dynamic bindings have been defined.

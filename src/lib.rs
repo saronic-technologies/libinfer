@@ -69,9 +69,6 @@ pub mod ffi {
         fn make_engine(options: &Options) -> Result<UniquePtr<Engine>>;
 
         /// Return the input dimensions of the engine.
-        /// For image inputs, values are in BCHW order.
-        /// A value of -1 in the batch dimension indicates the engine may accept a
-        /// dynamic batch size.
         fn get_input_dims(self: &Engine) -> Vec<u32>;
 
         /// Return output dimensions of the network.
@@ -94,7 +91,7 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_dim` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dim` with batch dimension equal to input batch dimension.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<f32>) -> Result<Vec<f32>>;
+        fn infer(self: Pin<&mut Engine>, input: &Vec<u8>) -> Result<Vec<f32>>;
     }
 }
 
