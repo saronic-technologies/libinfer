@@ -10,7 +10,6 @@ name = "libinfer"
 
 [dependencies]
 cxx = "1.0.116"
-approx = "0.5.1"
 
 [build-dependencies]
 cmake = "0.1.50"

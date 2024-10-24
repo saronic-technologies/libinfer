@@ -1,45 +1,44 @@
 //! Simple program to run tests and benchmark for libinfer.
 
-use approx::assert_relative_eq;
 use cxx::UniquePtr;
 use libinfer::{Engine, Options, Precision};
-use std::{
-    fs::File,
-    io::{BufRead, BufReader, Read},
-    iter::{repeat, zip},
-    path::PathBuf,
-    str::FromStr,
-    time::{Duration, Instant},
-};
+// use std::{
+//     fs::File,
+//     io::{BufRead, BufReader, Read},
+//     iter::repeat,
+//     path::PathBuf,
+//     str::FromStr,
+//     time::{Duration, Instant},
+// };
 
-fn read_binary_f32(path: PathBuf) -> Vec<f32> {
-    let mut f = File::open(path).unwrap();
-    let mut input = Vec::new();
-    f.read_to_end(&mut input).unwrap();
-    let floats: Vec<f32> = input
-        .chunks_exact(4)
-        .map(|bs| f32::from_le_bytes(bs.try_into().unwrap()))
-        .collect();
-    floats
-}
+// fn read_binary_f32(path: PathBuf) -> Vec<f32> {
+//     let mut f = File::open(path).unwrap();
+//     let mut input = Vec::new();
+//     f.read_to_end(&mut input).unwrap();
+//     let floats: Vec<f32> = input
+//         .chunks_exact(4)
+//         .map(|bs| f32::from_le_bytes(bs.try_into().unwrap()))
+//         .collect();
+//     floats
+// }
 
-fn parse_file_to_float_vec(path: PathBuf) -> Vec<f32> {
-    let file = File::open(path).unwrap();
-    let reader = BufReader::new(file);
+// fn parse_file_to_float_vec(path: PathBuf) -> Vec<f32> {
+//     let file = File::open(path).unwrap();
+//     let reader = BufReader::new(file);
 
-    let mut float_vec = Vec::new();
+//     let mut float_vec = Vec::new();
 
-    for line in reader.lines() {
-        let line = line.unwrap();
-        let values: Vec<f32> = line
-            .split_whitespace()
-            .filter_map(|s| f32::from_str(s).ok())
-            .collect();
+//     for line in reader.lines() {
+//         let line = line.unwrap();
+//         let values: Vec<f32> = line
+//             .split_whitespace()
+//             .filter_map(|s| f32::from_str(s).ok())
+//             .collect();
 
-        float_vec.extend(values);
-    }
-    float_vec
-}
+//         float_vec.extend(values);
+//     }
+//     float_vec
+// }
 
 fn test_input_dim(engine: &UniquePtr<Engine>) {
     let input_dim = engine.get_input_dims();
@@ -95,45 +94,45 @@ fn test_output_dim(engine: &UniquePtr<Engine>) {
 //    });
 //}
 
-fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: u64) {
-    let input_dim = engine.get_input_dims();
-    let batch_size = input_dim[0];
-    let input_len = input_dim.iter().fold(1, |acc, &e| acc * e) as usize;
-    let input_data: Vec<u8> = repeat(0).take(input_len).collect();
+// fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: u64) {
+//     let input_dim = engine.get_input_dims();
+//     let batch_size = input_dim[0];
+//     let input_len = input_dim.iter().fold(1, |acc, &e| acc * e) as usize;
+//     let input_data: Vec<u8> = repeat(0).take(input_len).collect();
 
-    // Warmup.
-    println!("Warming up inference codepath...");
-    for _ in 0..1024 {
-        let _output = engine.pin_mut().infer(&input_data).unwrap();
-    }
+//     // Warmup.
+//     println!("Warming up inference codepath...");
+//     for _ in 0..1024 {
+//         let _output = engine.pin_mut().infer(&input_data).unwrap();
+//     }
 
-    // Measure.
-    println!("Beginning {num_runs} inference runs...");
-    let latencies = (0..num_runs)
-        .map(|_| {
-            let start = Instant::now();
-            let _output = engine.pin_mut().infer(&input_data).unwrap();
-            start.elapsed()
-        })
-        .collect::<Vec<Duration>>();
+//     // Measure.
+//     println!("Beginning {num_runs} inference runs...");
+//     let latencies = (0..num_runs)
+//         .map(|_| {
+//             let start = Instant::now();
+//             let _output = engine.pin_mut().infer(&input_data).unwrap();
+//             start.elapsed()
+//         })
+//         .collect::<Vec<Duration>>();
 
-    let total_latency = latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>();
-    let average_batch_latency = total_latency / latencies.len() as f32;
-    let average_batch_framerate = 1.0 / average_batch_latency;
-    let average_frame_latency = total_latency / (latencies.len() as f32 * batch_size as f32);
-    let average_frame_framerate = 1.0 / average_frame_latency;
+//     let total_latency = latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>();
+//     let average_batch_latency = total_latency / latencies.len() as f32;
+//     let average_batch_framerate = 1.0 / average_batch_latency;
+//     let average_frame_latency = total_latency / (latencies.len() as f32 * batch_size as f32);
+//     let average_frame_framerate = 1.0 / average_frame_latency;
 
-    println!("inference calls    : {}", num_runs);
-    println!("total latency      : {}", total_latency);
-    println!("avg. frame latency : {}", average_frame_latency);
-    println!("avg. frame fps     : {}", average_frame_framerate);
-    println!("avg. batch latency : {}", average_batch_latency);
-    println!("avg. batch fps     : {}", average_batch_framerate);
-}
+//     println!("inference calls    : {}", num_runs);
+//     println!("total latency      : {}", total_latency);
+//     println!("avg. frame latency : {}", average_frame_latency);
+//     println!("avg. frame fps     : {}", average_frame_framerate);
+//     println!("avg. batch latency : {}", average_batch_latency);
+//     println!("avg. batch fps     : {}", average_batch_framerate);
+// }
 
 /// Benchmark inference engine.
 fn main() {
-    let n = 2 << 15;
+//    let n = 2 << 15;
     let b1_options = Options {
         model_name: "yolov8n_pp".into(),
         search_path: "test".into(),
@@ -143,7 +142,7 @@ fn main() {
         optimized_batch_size: 1,
         max_batch_size: 1,
     };
-    let mut b1_engine = Engine::new(&b1_options).unwrap();
+    let b1_engine = Engine::new(&b1_options).unwrap();
 
     test_input_dim(&b1_engine);
     test_output_dim(&b1_engine);
