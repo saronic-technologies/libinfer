@@ -235,8 +235,8 @@ void Engine::build() {
   }
 
   // Write the engine to disk (create output folder if necessary)
-  if (std::filesystem::create_directories(secondaryPath)) {
-    spdlog::info("Created output folder for engines at {}", secondaryPath);
+  if (std::filesystem::create_directories(std::filesystem::path(kSavePath))) {
+    spdlog::info("Created output folder for engines at {}", kSavePath);
   }
   std::ofstream outfile(mEnginePath, std::ofstream::binary);
   if (!outfile.is_open()) {
