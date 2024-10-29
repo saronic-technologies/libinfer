@@ -2,7 +2,7 @@
 
 use approx::assert_relative_eq;
 use cxx::UniquePtr;
-use libinfer::{Engine, Options, Precision};
+use libinfer::{Engine, Options, Precision, InputDataType};
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
@@ -142,61 +142,51 @@ fn main() {
         precision: Precision::FP16,
         optimized_batch_size: 1,
         max_batch_size: 1,
+        input_dtype: InputDataType::UINT8,
     };
     let mut b1_engine = Engine::new(&b1_options).unwrap();
 
     test_input_dim(&b1_engine);
     test_output_dim(&b1_engine);
 
-//    let dynamic_options = Options {
-//        model_name: "clip".into(),
-//        search_path: "test".into(),
-//        save_path: "test".into(),
-//        device_index: 0,
-//        precision: Precision::FP16,
-//        optimized_batch_size: 32,
-//        max_batch_size: 128,
-//    };
-//    let dynamic_engine = Engine::new(&dynamic_options).unwrap();
-//
-//    let b2_options = Options {
-//        model_name: "yolov8n_b2".into(),
-//        optimized_batch_size: 2,
-//        max_batch_size: 2,
-//        ..b1_options.clone()
-//    };
-//    let mut b2_engine = Engine::new(&b2_options).unwrap();
-//
-//    let b4_options = Options {
-//        model_name: "yolov8n_b4".into(),
-//        optimized_batch_size: 4,
-//        max_batch_size: 4,
-//        ..b1_options.clone()
-//    };
-//    let mut b4_engine = Engine::new(&b4_options).unwrap();
-//
-//    let b8_options = Options {
-//        model_name: "yolov8n_b8".into(),
-//        optimized_batch_size: 8,
-//        max_batch_size: 8,
-//        ..b1_options.clone()
-//    };
-//    let mut b8_engine = Engine::new(&b8_options).unwrap();
-//
-//    let b16_options = Options {
-//        model_name: "yolov8n_b16".into(),
-//        optimized_batch_size: 16,
-//        max_batch_size: 16,
-//        ..b1_options.clone()
-//    };
-//    let mut b16_engine = Engine::new(&b16_options).unwrap();
-//
+    let b2_options = Options {
+        model_name: "yolov8n_b2".into(),
+        optimized_batch_size: 2,
+        max_batch_size: 2,
+        ..b1_options.clone()
+    };
+    let mut b2_engine = Engine::new(&b2_options).unwrap();
+
+    let b4_options = Options {
+        model_name: "yolov8n_b4".into(),
+        optimized_batch_size: 4,
+        max_batch_size: 4,
+        ..b1_options.clone()
+    };
+    let mut b4_engine = Engine::new(&b4_options).unwrap();
+
+    let b8_options = Options {
+        model_name: "yolov8n_b8".into(),
+        optimized_batch_size: 8,
+        max_batch_size: 8,
+        ..b1_options.clone()
+    };
+    let mut b8_engine = Engine::new(&b8_options).unwrap();
+
+    let b16_options = Options {
+        model_name: "yolov8n_b16".into(),
+        optimized_batch_size: 16,
+        max_batch_size: 16,
+        ..b1_options.clone()
+    };
+    let mut b16_engine = Engine::new(&b16_options).unwrap();
+
 //    test_output_features(&mut b1_engine);
 //    test_output_features(&mut b4_engine);
-//
-//    benchmark_inference(&mut b1_engine, n);
-//    benchmark_inference(&mut b2_engine, n / 2);
-//    benchmark_inference(&mut b4_engine, n / 4);
-//    benchmark_inference(&mut b8_engine, n / 8);
-//    benchmark_inference(&mut b16_engine, n / 16);
+
+    benchmark_inference(&mut b1_engine, n);
+    benchmark_inference(&mut b2_engine, n / 2);
+    benchmark_inference(&mut b4_engine, n / 4);
+    benchmark_inference(&mut b8_engine, n / 8);
+    benchmark_inference(&mut b16_engine, n / 16);
 }

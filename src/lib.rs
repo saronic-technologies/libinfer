@@ -3,6 +3,14 @@ pub mod ffi {
 
     #[derive(Debug, Clone)]
     #[repr(u8)]
+    /// What input data type this network accepts.
+    enum InputDataType {
+        UINT8 = 1,
+        FP32 = 4,
+    }
+
+    #[derive(Debug, Clone)]
+    #[repr(u8)]
     /// What precision to build a new engine with.
     /// Note that `INT8` is not yet supported.
     enum Precision {
@@ -58,6 +66,8 @@ pub mod ffi {
         /// If the provided onnx network has a fixed batch size,
         /// then `optimized_batch_size` and `max_batch_size` must be equal.
         max_batch_size: i32,
+
+        input_dtype: InputDataType,
     }
 
     unsafe extern "C++" {
@@ -98,6 +108,7 @@ pub mod ffi {
 pub use crate::ffi::Engine;
 pub use crate::ffi::Options;
 pub use crate::ffi::Precision;
+pub use crate::ffi::InputDataType;
 
 use cxx::{Exception, UniquePtr};
 

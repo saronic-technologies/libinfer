@@ -50,7 +50,9 @@ Engine::Engine(const Options &options)
       kPrecision(static_cast<uint8_t>(options.precision)),
       kDeviceIndex(options.device_index),
       kOptBatchSize(options.optimized_batch_size),
-      kMaxBatchSize(options.max_batch_size) {
+      kMaxBatchSize(options.max_batch_size),
+      kInputDataTypeSize(static_cast<uint8_t>(options.input_dtype))
+{
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -331,7 +333,7 @@ void Engine::load() {
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
-      checkCudaErrorCode(
+        checkCudaErrorCode(
           cudaMallocAsync(&mBuffers[i],
                           kMaxBatchSize * tensorShape.d[1] * tensorShape.d[2] *
                               tensorShape.d[3] * sizeof(uint8_t),
@@ -376,7 +378,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
 
   // Check that the passed batch size can be handled.
   const int32_t calculatedBatchSize =
-      input.size() / (dims.d[0] * dims.d[1] * dims.d[2]);
+      (input.size() * kInputDataTypeSize) / (dims.d[0] * dims.d[1] * dims.d[2]);
   if (calculatedBatchSize > kMaxBatchSize) {
     throw std::runtime_error(
         "Input exceeds max batch size: " + std::to_string(calculatedBatchSize) +
