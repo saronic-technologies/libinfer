@@ -236,7 +236,10 @@ void Engine::build() {
     throw std::runtime_error("Could not create network serializer");
   }
 
-  // Write the engine to disk
+  // Write the engine to disk (create output folder if necessary)
+  if (std::filesystem::create_directories(std::filesystem::path(kSavePath))) {
+    spdlog::info("Created output folder for engines at {}", kSavePath);
+  }
   std::ofstream outfile(mEnginePath, std::ofstream::binary);
   if (!outfile.is_open()) {
     throw std::runtime_error("Could not open output file");
