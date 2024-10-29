@@ -404,7 +404,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   mContext->setInputShape(mIOTensorNames[0].c_str(), inputDims);
 
   checkCudaErrorCode(
-      cudaMemcpyAsync(mBuffers[0], input.data(), input.size() * kInputDataTypeSize,
+      cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
                       cudaMemcpyHostToDevice, inferenceCudaStream));
 
   // Ensure all dynamic bindings have been defined.
