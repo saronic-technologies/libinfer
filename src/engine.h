@@ -73,7 +73,7 @@ public:
   void load();
 
   // Run inference and return output tensor.
-  rust::Vec<float> infer(const rust::Vec<float> &input);
+  rust::Vec<float> infer(const rust::Vec<uint8_t> &input);
 
   rust::Vec<uint32_t> get_input_dims() const {
     rust::Vec<uint32_t> rv;
@@ -126,6 +126,7 @@ private:
   const uint32_t kDeviceIndex;
   const int32_t kOptBatchSize;
   const int32_t kMaxBatchSize;
+  const uint8_t kInputDataTypeSize;
 };
 
 // Rust friends.

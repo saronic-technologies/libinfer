@@ -3,6 +3,14 @@ pub mod ffi {
 
     #[derive(Debug, Clone)]
     #[repr(u8)]
+    /// What input data type this network accepts.
+    enum InputDataType {
+        UINT8 = 1,
+        FP32 = 4,
+    }
+
+    #[derive(Debug, Clone)]
+    #[repr(u8)]
     /// What precision to build a new engine with.
     /// Note that `INT8` is not yet supported.
     enum Precision {
@@ -58,6 +66,8 @@ pub mod ffi {
         /// If the provided onnx network has a fixed batch size,
         /// then `optimized_batch_size` and `max_batch_size` must be equal.
         max_batch_size: i32,
+
+        input_dtype: InputDataType,
     }
 
     unsafe extern "C++" {
@@ -69,9 +79,6 @@ pub mod ffi {
         fn make_engine(options: &Options) -> Result<UniquePtr<Engine>>;
 
         /// Return the input dimensions of the engine.
-        /// For image inputs, values are in BCHW order.
-        /// A value of -1 in the batch dimension indicates the engine may accept a
-        /// dynamic batch size.
         fn get_input_dims(self: &Engine) -> Vec<u32>;
 
         /// Return output dimensions of the network.
@@ -94,13 +101,14 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_dim` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dim` with batch dimension equal to input batch dimension.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<f32>) -> Result<Vec<f32>>;
+        fn infer(self: Pin<&mut Engine>, input: &Vec<u8>) -> Result<Vec<f32>>;
     }
 }
 
 pub use crate::ffi::Engine;
 pub use crate::ffi::Options;
 pub use crate::ffi::Precision;
+pub use crate::ffi::InputDataType;
 
 use cxx::{Exception, UniquePtr};
 
