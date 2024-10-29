@@ -378,7 +378,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
 
   // Check that the passed batch size can be handled.
   const int32_t calculatedBatchSize =
-      (input.size() * kInputDataTypeSize) / (dims.d[0] * dims.d[1] * dims.d[2]);
+      input.size() / (dims.d[0] * dims.d[1] * dims.d[2] * kInputDataTypeSize);
   if (calculatedBatchSize > kMaxBatchSize) {
     throw std::runtime_error(
         "Input exceeds max batch size: " + std::to_string(calculatedBatchSize) +
