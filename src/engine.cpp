@@ -336,7 +336,7 @@ void Engine::load() {
         checkCudaErrorCode(
           cudaMallocAsync(&mBuffers[i],
                           kMaxBatchSize * tensorShape.d[1] * tensorShape.d[2] *
-                              tensorShape.d[3] * sizeof(uint8_t),
+                              tensorShape.d[3] * kInputDataTypeSize,
                           stream));
 
       // Store the input dims for later use
