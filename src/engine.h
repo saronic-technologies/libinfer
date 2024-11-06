@@ -92,16 +92,9 @@ public:
 
   uint32_t get_output_len() const { return mOutputLengths[0]; }
 
-  InputDataType get_input_data_type() const {
-      return mInputDataType;
-  }
+  InputDataType get_input_data_type() const { return mInputDataType; }
 
 private:
-  // Converts the engine options into a string.
-  std::string serializeEngineOptions(const Options &options);
-
-  void getDeviceNames(std::vector<std::string> &deviceNames);
-
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
   std::vector<uint32_t> mOutputLengths{};
@@ -119,9 +112,7 @@ private:
   std::unique_ptr<nvinfer1::IExecutionContext> mContext = nullptr;
   Logger mLogger;
 
-  std::string mEnginePath;
-
-  // Option values.
+  // Options values.
   const std::string kEnginePath;
   const uint32_t kDeviceIndex;
 };

@@ -42,6 +42,7 @@ pub mod ffi {
         /// This is equivalent to multiplying the elements of `get_output_dim`.
         fn get_output_len(self: &Engine) -> u32;
 
+        /// Returns the input data type in use by this engine.
         fn get_input_data_type(self: &Engine) -> InputDataType;
 
         /// Run inference on an input batch.
@@ -58,8 +59,8 @@ pub mod ffi {
 }
 
 pub use crate::ffi::Engine;
-pub use crate::ffi::Options;
 pub use crate::ffi::InputDataType;
+pub use crate::ffi::Options;
 
 use cxx::{Exception, UniquePtr};
 

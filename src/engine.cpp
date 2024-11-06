@@ -19,7 +19,7 @@ std::unique_ptr<Engine> load_engine(const Options &options) {
   return engine;
 }
 
-// A few utility functions
+// Throw an exception on error, which manifests as Result in Rust.
 static inline void checkCudaErrorCode(cudaError_t code) {
   if (code != 0) {
     std::string errMsg =
@@ -27,11 +27,6 @@ static inline void checkCudaErrorCode(cudaError_t code) {
         cudaGetErrorName(code) + "), with message: " + cudaGetErrorString(code);
     throw std::runtime_error(errMsg);
   }
-}
-
-static inline bool doesFileExist(const std::string &filepath) {
-  std::ifstream f(filepath.c_str());
-  return f.good();
 }
 
 // Pretty dumb that we don't get a resize method in rust::Vec.
@@ -43,9 +38,7 @@ template <typename T> static void resize(rust::Vec<T> &v, size_t len) {
 }
 
 Engine::Engine(const Options &options)
-    : kEnginePath(options.path),
-      kDeviceIndex(options.device_index)
-{
+    : kEnginePath(options.path), kDeviceIndex(options.device_index) {
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -138,7 +131,6 @@ void Engine::load() {
   cudaStream_t stream;
   checkCudaErrorCode(cudaStreamCreate(&stream));
 
-
   // Allocate GPU memory for input and output buffers
   mOutputLengths.clear();
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
@@ -148,30 +140,29 @@ void Engine::load() {
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
-        checkCudaErrorCode(
-          cudaMallocAsync(&mBuffers[i],
-                          mInputBatchSize * tensorShape.d[1] * tensorShape.d[2] *
-                              tensorShape.d[3] * mInputDataTypeSize,
-                          stream));
+      checkCudaErrorCode(cudaMallocAsync(
+          &mBuffers[i],
+          mInputBatchSize * tensorShape.d[1] * tensorShape.d[2] *
+              tensorShape.d[3] * mInputDataTypeSize,
+          stream));
 
       // Store the input dims for later use
       mInputDims.emplace_back(tensorShape.d[1], tensorShape.d[2],
                               tensorShape.d[3]);
       mInputBatchSize = tensorShape.d[0];
       switch (tensorDataType) {
-              case DataType::kFLOAT:
-                      mInputDataType = InputDataType::FP32;
-                        mInputDataTypeSize = 4;
-                break;
-case DataType::kUINT8:
-                      mInputDataType = InputDataType::UINT8;
-                        mInputDataTypeSize = 1;
-                break;
-default:
-                      mInputDataType = InputDataType::FP32;
-                        mInputDataTypeSize = 4;
-                break;
-
+      case DataType::kFLOAT:
+        mInputDataType = InputDataType::FP32;
+        mInputDataTypeSize = 4;
+        break;
+      case DataType::kUINT8:
+        mInputDataType = InputDataType::UINT8;
+        mInputDataTypeSize = 1;
+        break;
+      default:
+        mInputDataType = InputDataType::FP32;
+        mInputDataTypeSize = 4;
+        break;
       }
     } else if (tensorType == TensorIOMode::kOUTPUT) {
       // The binding is an output
@@ -233,9 +224,9 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
                                dims.d[2]};
   mContext->setInputShape(mIOTensorNames[0].c_str(), inputDims);
 
-  checkCudaErrorCode(
-      cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
-                      cudaMemcpyHostToDevice, inferenceCudaStream));
+  checkCudaErrorCode(cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
+                                     cudaMemcpyHostToDevice,
+                                     inferenceCudaStream));
 
   // Ensure all dynamic bindings have been defined.
   if (!mContext->allInputDimensionsSpecified()) {
@@ -271,14 +262,3 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   return output;
 }
 
-void Engine::getDeviceNames(std::vector<std::string> &deviceNames) {
-  int numGPUs;
-  cudaGetDeviceCount(&numGPUs);
-
-  for (int device = 0; device < numGPUs; device++) {
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, device);
-
-    deviceNames.push_back(std::string(prop.name));
-  }
-}

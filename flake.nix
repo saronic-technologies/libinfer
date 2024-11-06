@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
     jetpack-nixos.url = "github:anduril/jetpack-nixos";
   };
@@ -16,7 +16,7 @@
         pkgs = import nixpkgs { inherit system; };
         cudaPackages = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages else pkgs.cudaPackages_11;
         l4t-cuda = jetpack-nixos.legacyPackages.aarch64-linux.l4t-cuda;
-        inherit (cudaPackages) cudatoolkit tensorrt cudnn cuda_cudart;
+        inherit (cudaPackages) cudatoolkit tensorrt_8_6 cudnn cuda_cudart;
 
         inputs = with pkgs; [
           bacon
@@ -28,7 +28,7 @@
           openssl
           pkg-config
           cudatoolkit
-          tensorrt
+          tensorrt_8_6
           rustc
           cargo
           rustfmt
@@ -42,7 +42,7 @@
           default = pkgs.mkShell {
             nativeBuildInputs = inputs;
             LIBCLANG_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.libclang.lib}/lib/";
-            TENSORRT_LIBRARIES = "${tensorrt}/lib";
+            TENSORRT_LIBRARIES = "${tensorrt_8_6}/lib";
             CUDA_INCLUDE_DIRS = "${cudatoolkit}/include";
             CUDA_LIBRARIES = "${cudatoolkit}/lib";
           };

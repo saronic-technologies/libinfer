@@ -1,45 +1,41 @@
 //! Simple program to run tests and benchmark for libinfer.
 
-use approx::assert_relative_eq;
+//use approx::assert_relative_eq;
 use cxx::UniquePtr;
-use libinfer::{Engine, Options, InputDataType};
+use libinfer::{Engine, Options};
 use std::{
-    fs::File,
-    io::{BufRead, BufReader, Read},
-    iter::{repeat, zip},
-    path::PathBuf,
-    str::FromStr,
+    iter::{repeat},
     time::{Duration, Instant},
 };
 
-fn read_binary_f32(path: PathBuf) -> Vec<f32> {
-    let mut f = File::open(path).unwrap();
-    let mut input = Vec::new();
-    f.read_to_end(&mut input).unwrap();
-    let floats: Vec<f32> = input
-        .chunks_exact(4)
-        .map(|bs| f32::from_le_bytes(bs.try_into().unwrap()))
-        .collect();
-    floats
-}
-
-fn parse_file_to_float_vec(path: PathBuf) -> Vec<f32> {
-    let file = File::open(path).unwrap();
-    let reader = BufReader::new(file);
-
-    let mut float_vec = Vec::new();
-
-    for line in reader.lines() {
-        let line = line.unwrap();
-        let values: Vec<f32> = line
-            .split_whitespace()
-            .filter_map(|s| f32::from_str(s).ok())
-            .collect();
-
-        float_vec.extend(values);
-    }
-    float_vec
-}
+//fn read_binary_f32(path: PathBuf) -> Vec<f32> {
+//    let mut f = File::open(path).unwrap();
+//    let mut input = Vec::new();
+//    f.read_to_end(&mut input).unwrap();
+//    let floats: Vec<f32> = input
+//        .chunks_exact(4)
+//        .map(|bs| f32::from_le_bytes(bs.try_into().unwrap()))
+//        .collect();
+//    floats
+//}
+//
+//fn parse_file_to_float_vec(path: PathBuf) -> Vec<f32> {
+//    let file = File::open(path).unwrap();
+//    let reader = BufReader::new(file);
+//
+//    let mut float_vec = Vec::new();
+//
+//    for line in reader.lines() {
+//        let line = line.unwrap();
+//        let values: Vec<f32> = line
+//            .split_whitespace()
+//            .filter_map(|s| f32::from_str(s).ok())
+//            .collect();
+//
+//        float_vec.extend(values);
+//    }
+//    float_vec
+//}
 
 fn test_input_dim(engine: &UniquePtr<Engine>) {
     let input_dim = engine.get_input_dims();
@@ -140,41 +136,41 @@ fn main() {
     };
     let mut b1_engine = Engine::new(&b1_options).unwrap();
 
-    println!("Input data type: {:?}", b1_engine.get_input_data_type());
+//    println!("Input data type: {:?}", b1_engine.get_input_data_type());
 
     test_input_dim(&b1_engine);
     test_output_dim(&b1_engine);
 
-//    let b2_options = Options {
-//        path: "test/yolov8n_b2.engine".into(),
-//        device_index: 0,
-//    };
-//    let mut b2_engine = Engine::new(&b2_options).unwrap();
-//
-//    let b4_options = Options {
-//        path: "test/yolov8n_b4.engine".into(),
-//        device_index: 0,
-//    };
-//    let mut b4_engine = Engine::new(&b4_options).unwrap();
-//
-//    let b8_options = Options {
-//        path: "test/yolov8n_b8.engine".into(),
-//        device_index: 0,
-//    };
-//    let mut b8_engine = Engine::new(&b8_options).unwrap();
-//
-//    let b16_options = Options {
-//        path: "test/yolov8n_b16.engine".into(),
-//        device_index: 0,
-//    };
-//    let mut b16_engine = Engine::new(&b16_options).unwrap();
+    //    let b2_options = Options {
+    //        path: "test/yolov8n_b2.engine".into(),
+    //        device_index: 0,
+    //    };
+    //    let mut b2_engine = Engine::new(&b2_options).unwrap();
+    //
+    //    let b4_options = Options {
+    //        path: "test/yolov8n_b4.engine".into(),
+    //        device_index: 0,
+    //    };
+    //    let mut b4_engine = Engine::new(&b4_options).unwrap();
+    //
+    //    let b8_options = Options {
+    //        path: "test/yolov8n_b8.engine".into(),
+    //        device_index: 0,
+    //    };
+    //    let mut b8_engine = Engine::new(&b8_options).unwrap();
+    //
+    //    let b16_options = Options {
+    //        path: "test/yolov8n_b16.engine".into(),
+    //        device_index: 0,
+    //    };
+    //    let mut b16_engine = Engine::new(&b16_options).unwrap();
 
-//    test_output_features(&mut b1_engine);
-//    test_output_features(&mut b4_engine);
+    //    test_output_features(&mut b1_engine);
+    //    test_output_features(&mut b4_engine);
 
     benchmark_inference(&mut b1_engine, n);
-//    benchmark_inference(&mut b2_engine, n / 2);
-//    benchmark_inference(&mut b4_engine, n / 4);
-//    benchmark_inference(&mut b8_engine, n / 8);
-//    benchmark_inference(&mut b16_engine, n / 16);
+    //    benchmark_inference(&mut b2_engine, n / 2);
+    //    benchmark_inference(&mut b4_engine, n / 4);
+    //    benchmark_inference(&mut b8_engine, n / 8);
+    //    benchmark_inference(&mut b16_engine, n / 16);
 }
