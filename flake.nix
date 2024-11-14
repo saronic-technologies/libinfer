@@ -45,6 +45,7 @@
             TENSORRT_LIBRARIES = "${tensorrt_8_6}/lib";
             CUDA_INCLUDE_DIRS = "${cudatoolkit}/include";
             CUDA_LIBRARIES = "${cudatoolkit}/lib";
+            LD_LIBRARY_PATH = "${tensorrt_8_6}/lib";
           };
         };
       });

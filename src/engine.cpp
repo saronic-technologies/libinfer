@@ -140,12 +140,6 @@ void Engine::load() {
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
-      checkCudaErrorCode(cudaMallocAsync(
-          &mBuffers[i],
-          mInputBatchSize * tensorShape.d[1] * tensorShape.d[2] *
-              tensorShape.d[3] * mInputDataTypeSize,
-          stream));
-
       // Store the input dims for later use
       mInputDims.emplace_back(tensorShape.d[1], tensorShape.d[2],
                               tensorShape.d[3]);
@@ -164,6 +158,13 @@ void Engine::load() {
         mInputDataTypeSize = 4;
         break;
       }
+
+      checkCudaErrorCode(cudaMallocAsync(
+          &mBuffers[i],
+          mInputBatchSize * tensorShape.d[1] * tensorShape.d[2] *
+              tensorShape.d[3] * mInputDataTypeSize,
+          stream));
+
     } else if (tensorType == TensorIOMode::kOUTPUT) {
       // The binding is an output
       uint32_t outputLenFloat = 1;
@@ -261,4 +262,3 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
 
   return output;
 }
-

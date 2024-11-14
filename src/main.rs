@@ -136,7 +136,7 @@ fn main() {
     };
     let mut b1_engine = Engine::new(&b1_options).unwrap();
 
-//    println!("Input data type: {:?}", b1_engine.get_input_data_type());
+    println!("Input data type: {:?}", b1_engine.get_input_data_type());
 
     test_input_dim(&b1_engine);
     test_output_dim(&b1_engine);
