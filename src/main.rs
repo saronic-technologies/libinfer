@@ -133,6 +133,7 @@ fn main() {
     let b1_options = Options {
         path: "test/yolov8n_pp.engine".into(),
         device_index: 0,
+        use_cuda_graph: true,
     };
     let mut b1_engine = Engine::new(&b1_options).unwrap();
 

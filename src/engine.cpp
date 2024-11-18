@@ -38,7 +38,8 @@ template <typename T> static void resize(rust::Vec<T> &v, size_t len) {
 }
 
 Engine::Engine(const Options &options)
-    : kEnginePath(options.path), kDeviceIndex(options.device_index) {
+    : kEnginePath(options.path), kDeviceIndex(options.device_index),
+      kUseCudaGraph(options.use_cuda_graph) {
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -158,7 +159,6 @@ void Engine::load() {
         mInputDataTypeSize = 4;
         break;
       }
-
       checkCudaErrorCode(cudaMallocAsync(
           &mBuffers[i],
           mInputBatchSize * tensorShape.d[1] * tensorShape.d[2] *
@@ -243,10 +243,30 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
     }
   }
 
-  // Run inference.
-  bool status = mContext->enqueueV3(inferenceCudaStream);
-  if (!status) {
-    throw std::runtime_error("enqueue failed");
+  if (kUseCudaGraph) {
+    if (!mCudaGraphInit) {
+      cudaGraph_t graph;
+      bool status = mContext->enqueueV3(0);
+      cudaStreamBeginCapture(inferenceCudaStream, cudaStreamCaptureModeGlobal);
+      status = mContext->enqueueV3(inferenceCudaStream);
+      if (!status) {
+        throw std::runtime_error("enqueue failed");
+      }
+      cudaStreamEndCapture(inferenceCudaStream, &graph);
+      cudaGraphInstantiate(&mCudaGraphInstance, graph, nullptr, nullptr, 0);
+      mCudaGraphInit = true;
+    }
+    else {
+        cudaGraphLaunch(mCudaGraphInstance, inferenceCudaStream);
+        checkCudaErrorCode(cudaStreamSynchronize(inferenceCudaStream));
+    }
+  }
+  else {
+    // Run inference.
+    bool status = mContext->enqueueV3(inferenceCudaStream);
+    if (!status) {
+      throw std::runtime_error("enqueue failed");
+    }
   }
 
   const auto outputLen = calculatedBatchSize * mOutputLengths[0];

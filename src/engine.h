@@ -112,9 +112,13 @@ private:
   std::unique_ptr<nvinfer1::IExecutionContext> mContext = nullptr;
   Logger mLogger;
 
+  cudaGraphExec_t mCudaGraphInstance;
+  bool mCudaGraphInit = false;
+
   // Options values.
   const std::string kEnginePath;
   const uint32_t kDeviceIndex;
+  const bool kUseCudaGraph;
 };
 
 // Rust friends.

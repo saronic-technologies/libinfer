@@ -18,6 +18,11 @@ pub mod ffi {
         /// If building an engine, it will be built for this device.
         /// Refer to output from e.g. `nvidia-smi` for this value.
         device_index: u32,
+
+        /// Whether or not to use a CUDA graph for launching kernels for a potential performance
+        /// gain. See TensorRT docs for further information.
+        /// This feature cannot be used if your engine uses dynamic input shapes.
+        use_cuda_graph: bool,
     }
 
     unsafe extern "C++" {
