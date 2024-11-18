@@ -11,6 +11,7 @@
 #include "rust/cxx.h"
 
 struct Options;
+enum class InputDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
 public:
@@ -66,9 +67,6 @@ public:
   Engine(const Options &options);
   ~Engine();
 
-  // Build the network.
-  void build();
-
   // Load and prepare the network for inference.
   void load();
 
@@ -94,12 +92,9 @@ public:
 
   uint32_t get_output_len() const { return mOutputLengths[0]; }
 
+  InputDataType get_input_data_type() const { return mInputDataType; }
+
 private:
-  // Converts the engine options into a string.
-  std::string serializeEngineOptions(const Options &options);
-
-  void getDeviceNames(std::vector<std::string> &deviceNames);
-
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
   std::vector<uint32_t> mOutputLengths{};
@@ -107,6 +102,8 @@ private:
   std::vector<nvinfer1::Dims> mOutputDims;
   std::vector<std::string> mIOTensorNames;
   int32_t mInputBatchSize;
+  InputDataType mInputDataType;
+  uint8_t mInputDataTypeSize;
 
   // Must keep IRuntime around for inference, see:
   // https://forums.developer.nvidia.com/t/is-it-safe-to-deallocate-nvinfer1-iruntime-after-creating-an-nvinfer1-icudaengine-but-before-running-inference-with-said-icudaengine/255381/2?u=cyruspk4w6
@@ -115,19 +112,10 @@ private:
   std::unique_ptr<nvinfer1::IExecutionContext> mContext = nullptr;
   Logger mLogger;
 
-  std::string mEnginePath;
-
-  // Option values.
-  const std::string kModelName;
-  const std::string kSearchPath;
-  const std::string kSavePath;
-  const std::string kCanonicalEngineName;
-  const uint8_t kPrecision;
+  // Options values.
+  const std::string kEnginePath;
   const uint32_t kDeviceIndex;
-  const int32_t kOptBatchSize;
-  const int32_t kMaxBatchSize;
-  const uint8_t kInputDataTypeSize;
 };
 
 // Rust friends.
-std::unique_ptr<Engine> make_engine(const Options &options);
+std::unique_ptr<Engine> load_engine(const Options &options);

@@ -13,14 +13,13 @@
 using namespace nvinfer1;
 
 // Implement our Rust friends.
-std::unique_ptr<Engine> make_engine(const Options &options) {
+std::unique_ptr<Engine> load_engine(const Options &options) {
   auto engine = std::make_unique<Engine>(options);
-  engine->build();
   engine->load();
   return engine;
 }
 
-// A few utility functions
+// Throw an exception on error, which manifests as Result in Rust.
 static inline void checkCudaErrorCode(cudaError_t code) {
   if (code != 0) {
     std::string errMsg =
@@ -28,11 +27,6 @@ static inline void checkCudaErrorCode(cudaError_t code) {
         cudaGetErrorName(code) + "), with message: " + cudaGetErrorString(code);
     throw std::runtime_error(errMsg);
   }
-}
-
-static inline bool doesFileExist(const std::string &filepath) {
-  std::ifstream f(filepath.c_str());
-  return f.good();
 }
 
 // Pretty dumb that we don't get a resize method in rust::Vec.
@@ -44,15 +38,7 @@ template <typename T> static void resize(rust::Vec<T> &v, size_t len) {
 }
 
 Engine::Engine(const Options &options)
-    : kModelName(options.model_name), kSearchPath(options.search_path),
-      kSavePath(options.save_path),
-      kCanonicalEngineName(serializeEngineOptions(options)),
-      kPrecision(static_cast<uint8_t>(options.precision)),
-      kDeviceIndex(options.device_index),
-      kOptBatchSize(options.optimized_batch_size),
-      kMaxBatchSize(options.max_batch_size),
-      kInputDataTypeSize(static_cast<uint8_t>(options.input_dtype))
-{
+    : kEnginePath(options.path), kDeviceIndex(options.device_index) {
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -77,189 +63,6 @@ Engine::Engine(const Options &options)
   }
 }
 
-void Engine::build() {
-  const auto primaryPath = std::filesystem::path(kSearchPath) /
-                           std::filesystem::path(kCanonicalEngineName);
-  const auto secondaryPath = std::filesystem::path(kSavePath) /
-                             std::filesystem::path(kCanonicalEngineName);
-
-  // Check if engine exists at search path.
-  if (doesFileExist(primaryPath)) {
-    spdlog::info("Found engine {}", primaryPath.string());
-    mEnginePath = primaryPath;
-    return;
-  } else {
-    mEnginePath = secondaryPath;
-  }
-
-  // Check if engine exists at save path.
-  if (doesFileExist(mEnginePath)) {
-    spdlog::info("Found engine {}", secondaryPath.string());
-    return;
-  }
-
-  const auto onnxPath = std::filesystem::path(kSearchPath) /
-                        std::filesystem::path(kModelName + ".onnx");
-
-  if (!doesFileExist(onnxPath)) {
-    throw std::runtime_error("Could not find onnx model at path: " +
-                             onnxPath.string());
-  }
-
-  spdlog::info("Engine not found, generating. This could take a while...");
-
-  auto builder = std::unique_ptr<nvinfer1::IBuilder>(
-      nvinfer1::createInferBuilder(mLogger));
-  if (!builder) {
-    throw std::runtime_error("Could not create engine builder");
-  }
-
-  // Define an explicit batch size and then create the network (implicit batch
-  // size is deprecated). More info here:
-  // https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#explicit-implicit-batch
-  auto explicitBatch = 1U << static_cast<uint32_t>(
-                           NetworkDefinitionCreationFlag::kEXPLICIT_BATCH);
-  auto network = std::unique_ptr<nvinfer1::INetworkDefinition>(
-      builder->createNetworkV2(explicitBatch));
-  if (!network) {
-    throw std::runtime_error("Could not create network definition");
-  }
-
-  auto parser = std::unique_ptr<nvonnxparser::IParser>(
-      nvonnxparser::createParser(*network, mLogger));
-  if (!parser) {
-    throw std::runtime_error("Could nto create onnx parser");
-  }
-
-  // We are going to first read the onnx file into memory, then pass that buffer
-  // to the parser. Had our onnx model file been encrypted, this approach would
-  // allow us to first decrypt the buffer.
-  std::ifstream file(onnxPath, std::ios::binary | std::ios::ate);
-  std::streamsize size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  std::vector<char> buffer(size);
-  if (!file.read(buffer.data(), size)) {
-    throw std::runtime_error("Unable to read onnx file");
-  }
-
-  // Parse the buffer we read into memory.
-  auto parsed = parser->parse(buffer.data(), buffer.size());
-  if (!parsed) {
-    throw std::runtime_error("Could not parse onnx file");
-  }
-
-  // Ensure that all the inputs have the same batch size
-  const auto numInputs = network->getNbInputs();
-  if (numInputs < 1) {
-    throw std::runtime_error("Error, model needs at least 1 input!");
-  }
-  const auto input0Batch = network->getInput(0)->getDimensions().d[0];
-  for (int32_t i = 1; i < numInputs; ++i) {
-    if (network->getInput(i)->getDimensions().d[0] != input0Batch) {
-      throw std::runtime_error("Error, the model has multiple inputs, each "
-                               "with differing batch sizes!");
-    }
-  }
-
-  // Check to see if the model supports dynamic batch size or not
-  bool doesSupportDynamicBatch = false;
-  if (input0Batch == -1) {
-    doesSupportDynamicBatch = true;
-    spdlog::info("Model supports dynamic batch size");
-  } else {
-    spdlog::info("Model requires fixed batch size of {}", input0Batch);
-    // If the model supports a fixed batch size, ensure that the maxBatchSize
-    // and optBatchSize were set correctly.
-    if (kOptBatchSize != input0Batch || kMaxBatchSize != input0Batch) {
-      throw std::runtime_error(
-          "Error, model requires a fixed batch size of " +
-          std::to_string(input0Batch) +
-          ". Must set Options.optimized_batch_size and Options.max_batch_size "
-          "to this value.");
-    }
-  }
-
-  auto config =
-      std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
-  if (!config) {
-    throw std::runtime_error("Could not create builder config");
-  }
-
-  // Register a single optimization profile
-  IOptimizationProfile *optProfile = builder->createOptimizationProfile();
-  for (int32_t i = 0; i < numInputs; ++i) {
-    // Must specify dimensions for all the inputs the model expects.
-    const auto input = network->getInput(i);
-    const auto inputName = input->getName();
-    const auto inputDims = input->getDimensions();
-    int32_t inputC = inputDims.d[1];
-    int32_t inputH = inputDims.d[2];
-    int32_t inputW = inputDims.d[3];
-
-    // Specify the optimization profile.
-    if (doesSupportDynamicBatch) {
-      optProfile->setDimensions(inputName, OptProfileSelector::kMIN,
-                                Dims4(1, inputC, inputH, inputW));
-    } else {
-      optProfile->setDimensions(inputName, OptProfileSelector::kMIN,
-                                Dims4(kOptBatchSize, inputC, inputH, inputW));
-    }
-    optProfile->setDimensions(inputName, OptProfileSelector::kOPT,
-                              Dims4(kOptBatchSize, inputC, inputH, inputW));
-    optProfile->setDimensions(inputName, OptProfileSelector::kMAX,
-                              Dims4(kMaxBatchSize, inputC, inputH, inputW));
-  }
-  config->addOptimizationProfile(optProfile);
-
-  if (static_cast<Precision>(kPrecision) == Precision::FP16) {
-    if (!builder->platformHasFastFp16()) {
-      throw std::runtime_error("Error: GPU does not support FP16 precision");
-    }
-    config->setFlag(BuilderFlag::kFP16);
-  } else if (static_cast<Precision>(kPrecision) == Precision::INT8) {
-    throw std::runtime_error("INT8 is not yet supported");
-  }
-
-  // CUDA stream used for profiling by the builder.
-  cudaStream_t profileStream;
-  checkCudaErrorCode(cudaStreamCreate(&profileStream));
-  config->setProfileStream(profileStream);
-
-  // Build the engine.
-  // If this call fails, it is suggested to increase the logger verbosity to
-  // kVERBOSE and try rebuilding the engine. Doing so will provide you with more
-  // information on why exactly it is failing.
-  std::unique_ptr<IHostMemory> plan{
-      builder->buildSerializedNetwork(*network, *config)};
-  if (!plan) {
-    throw std::runtime_error("Could not create network serializer");
-  }
-
-  // Write the engine to disk (create output folder if necessary)
-  if (std::filesystem::create_directories(std::filesystem::path(kSavePath))) {
-    spdlog::info("Created output folder for engines at {}", kSavePath);
-  }
-  std::ofstream outfile(mEnginePath, std::ofstream::binary);
-  if (!outfile.is_open()) {
-    throw std::runtime_error("Could not open output file");
-  }
-
-  outfile.write(reinterpret_cast<const char *>(plan->data()), plan->size());
-  if (outfile.fail()) {
-    throw std::runtime_error("Could not write engine file to disk");
-  }
-
-  outfile.close();
-  if (outfile.fail()) {
-    throw std::runtime_error("Could not close engine file");
-  }
-
-  spdlog::info("Saved engine to {}", mEnginePath);
-
-  checkCudaErrorCode(cudaStreamDestroy(profileStream));
-}
-
 Engine::~Engine() {
   // Free the GPU memory
   for (auto &buffer : mBuffers) {
@@ -271,7 +74,7 @@ Engine::~Engine() {
 
 void Engine::load() {
   // Read the serialized model from disk
-  std::ifstream file(mEnginePath, std::ios::binary | std::ios::ate);
+  std::ifstream file(kEnginePath, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
     throw std::runtime_error("Could not open engine file");
   }
@@ -335,17 +138,33 @@ void Engine::load() {
     mIOTensorNames.emplace_back(tensorName);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
+    const auto tensorDataType = mEngine->getTensorDataType(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
-        checkCudaErrorCode(
-          cudaMallocAsync(&mBuffers[i],
-                          kMaxBatchSize * tensorShape.d[1] * tensorShape.d[2] *
-                              tensorShape.d[3] * kInputDataTypeSize,
-                          stream));
-
       // Store the input dims for later use
       mInputDims.emplace_back(tensorShape.d[1], tensorShape.d[2],
                               tensorShape.d[3]);
       mInputBatchSize = tensorShape.d[0];
+      switch (tensorDataType) {
+      case DataType::kFLOAT:
+        mInputDataType = InputDataType::FP32;
+        mInputDataTypeSize = 4;
+        break;
+      case DataType::kUINT8:
+        mInputDataType = InputDataType::UINT8;
+        mInputDataTypeSize = 1;
+        break;
+      default:
+        mInputDataType = InputDataType::FP32;
+        mInputDataTypeSize = 4;
+        break;
+      }
+
+      checkCudaErrorCode(cudaMallocAsync(
+          &mBuffers[i],
+          mInputBatchSize * tensorShape.d[1] * tensorShape.d[2] *
+              tensorShape.d[3] * mInputDataTypeSize,
+          stream));
+
     } else if (tensorType == TensorIOMode::kOUTPUT) {
       // The binding is an output
       uint32_t outputLenFloat = 1;
@@ -359,7 +178,7 @@ void Engine::load() {
 
       mOutputLengths.push_back(outputLenFloat);
       checkCudaErrorCode(cudaMallocAsync(
-          &mBuffers[i], outputLenFloat * kMaxBatchSize * sizeof(float),
+          &mBuffers[i], outputLenFloat * mInputBatchSize * sizeof(float),
           stream));
     } else {
       throw std::runtime_error(
@@ -381,11 +200,11 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
 
   // Check that the passed batch size can be handled.
   const int32_t calculatedBatchSize =
-      input.size() / (dims.d[0] * dims.d[1] * dims.d[2] * kInputDataTypeSize);
-  if (calculatedBatchSize > kMaxBatchSize) {
+      input.size() / (dims.d[0] * dims.d[1] * dims.d[2] * mInputDataTypeSize);
+  if (calculatedBatchSize > mInputBatchSize) {
     throw std::runtime_error(
         "Input exceeds max batch size: " + std::to_string(calculatedBatchSize) +
-        " > " + std::to_string(kMaxBatchSize));
+        " > " + std::to_string(mInputBatchSize));
   }
 
   // If the network's batch size is fixed, the input batch dimension must match.
@@ -393,7 +212,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
     throw std::runtime_error(
         "Input batch size does not match required fixed batch size: " +
         std::to_string(calculatedBatchSize) +
-        " != " + std::to_string(kOptBatchSize));
+        " != " + std::to_string(mInputBatchSize));
   }
 
   // Check that vector has enough elements for full input.
@@ -406,9 +225,9 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
                                dims.d[2]};
   mContext->setInputShape(mIOTensorNames[0].c_str(), inputDims);
 
-  checkCudaErrorCode(
-      cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
-                      cudaMemcpyHostToDevice, inferenceCudaStream));
+  checkCudaErrorCode(cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
+                                     cudaMemcpyHostToDevice,
+                                     inferenceCudaStream));
 
   // Ensure all dynamic bindings have been defined.
   if (!mContext->allInputDimensionsSpecified()) {
@@ -442,52 +261,4 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   checkCudaErrorCode(cudaStreamDestroy(inferenceCudaStream));
 
   return output;
-}
-
-std::string Engine::serializeEngineOptions(const Options &options) {
-  auto canonicalName = std::string(options.model_name);
-
-  // Add the GPU device name to the file to ensure that the model is only used
-  // on devices with the exact same GPU.
-  std::vector<std::string> deviceNames;
-  getDeviceNames(deviceNames);
-
-  if (static_cast<size_t>(options.device_index) >= deviceNames.size()) {
-    throw std::runtime_error("Provided device index is out of range");
-  }
-
-  auto deviceName = deviceNames[options.device_index];
-  deviceName.erase(
-      std::remove_if(deviceName.begin(), deviceName.end(), ::isspace),
-      deviceName.end());
-
-  canonicalName += "_" + deviceName;
-
-  // Serialize the specified options into the filename.
-  if (options.precision == Precision::FP16) {
-    canonicalName += "_fp16";
-  } else if (options.precision == Precision::FP32) {
-    canonicalName += "_fp32";
-  } else {
-    canonicalName += "_int8";
-  }
-
-  canonicalName += "_b" + std::to_string(options.optimized_batch_size) + "m" +
-                   std::to_string(options.max_batch_size);
-
-  canonicalName += ".engine";
-
-  return canonicalName;
-}
-
-void Engine::getDeviceNames(std::vector<std::string> &deviceNames) {
-  int numGPUs;
-  cudaGetDeviceCount(&numGPUs);
-
-  for (int device = 0; device < numGPUs; device++) {
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, device);
-
-    deviceNames.push_back(std::string(prop.name));
-  }
 }
