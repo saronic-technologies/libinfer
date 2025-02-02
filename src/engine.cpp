@@ -140,10 +140,9 @@ void Engine::load() {
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
-      // Store the input dims for later use
+      // Store the input dims for later use.
       mInputDims.emplace_back(tensorShape.d[1], tensorShape.d[2],
                               tensorShape.d[3]);
-      mInputBatchSize = tensorShape.d[0];
       switch (tensorDataType) {
       case DataType::kFLOAT:
         mInputDataType = InputDataType::FP32;
@@ -159,11 +158,22 @@ void Engine::load() {
         break;
       }
 
-      checkCudaErrorCode(cudaMallocAsync(
-          &mBuffers[i],
-          mInputBatchSize * tensorShape.d[1] * tensorShape.d[2] *
-              tensorShape.d[3] * mInputDataTypeSize,
-          stream));
+      mMinBatchSize =
+          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN)
+              .d[0];
+      mOptBatchSize =
+          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT)
+              .d[0];
+      mMaxBatchSize =
+          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX)
+              .d[0];
+
+      // Allocate as much memory for the largest supported batch size.
+      checkCudaErrorCode(
+          cudaMallocAsync(&mBuffers[i],
+                          mMaxBatchSize * tensorShape.d[1] * tensorShape.d[2] *
+                              tensorShape.d[3] * mInputDataTypeSize,
+                          stream));
 
     } else if (tensorType == TensorIOMode::kOUTPUT) {
       // The binding is an output
@@ -172,13 +182,15 @@ void Engine::load() {
 
       for (int j = 1; j < tensorShape.nbDims; ++j) {
         // We ignore j = 0 because that is the batch size, and we will take that
-        // into account when sizing the buffer
+        // into account when sizing the buffer.
         outputLenFloat *= tensorShape.d[j];
       }
 
       mOutputLengths.push_back(outputLenFloat);
+
+      // Allocate as much memory for the largest supported batch size.
       checkCudaErrorCode(cudaMallocAsync(
-          &mBuffers[i], outputLenFloat * mInputBatchSize * sizeof(float),
+          &mBuffers[i], outputLenFloat * mMaxBatchSize * sizeof(float),
           stream));
     } else {
       throw std::runtime_error(
@@ -201,23 +213,23 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   // Check that the passed batch size can be handled.
   const int32_t calculatedBatchSize =
       input.size() / (dims.d[0] * dims.d[1] * dims.d[2] * mInputDataTypeSize);
-  if (calculatedBatchSize > mInputBatchSize) {
-    throw std::runtime_error(
-        "Input exceeds max batch size: " + std::to_string(calculatedBatchSize) +
-        " > " + std::to_string(mInputBatchSize));
+
+  if (calculatedBatchSize < mMinBatchSize) {
+    throw std::runtime_error("Input is less the minimum batch size: " +
+                             std::to_string(calculatedBatchSize) + " > " +
+                             std::to_string(mMinBatchSize));
   }
 
-  // If the network's batch size is fixed, the input batch dimension must match.
-  if (mInputBatchSize != -1 && calculatedBatchSize != mInputBatchSize) {
-    throw std::runtime_error(
-        "Input batch size does not match required fixed batch size: " +
-        std::to_string(calculatedBatchSize) +
-        " != " + std::to_string(mInputBatchSize));
+  if (calculatedBatchSize > mMaxBatchSize) {
+    throw std::runtime_error("Input is greater than maximum batch size: " +
+                             std::to_string(calculatedBatchSize) + " > " +
+                             std::to_string(mMaxBatchSize));
   }
 
   // Check that vector has enough elements for full input.
   if (input.size() % (dims.d[0] * dims.d[1] * dims.d[2]) != 0) {
-    throw std::runtime_error("Input vector incorrectly sized");
+    throw std::runtime_error(
+        "Input vector does not contain a whole number of batches");
   }
 
   // Define the batch size.

@@ -28,14 +28,14 @@ pub mod ffi {
         /// Load the engine from the passed options.
         fn load_engine(options: &Options) -> Result<UniquePtr<Engine>>;
 
-        /// Return the input dimensions of the engine.
+        /// Return the input dimensions of the engine, not including the batch dimension.
         fn get_input_dims(self: &Engine) -> Vec<u32>;
 
-        /// Return output dimensions of the network.
-        /// The meaning of these dimensions is dependent on the network definition,
-        /// but the batch dimension always comes first.
-        /// A value of -1 in the batch dimension indicates the engine has dynamic batch size
-        /// enabled and will the output will have a batch dimension equal to the input value.
+        /// Return the minimum, optimized, and maximum batch dimension for this engine.
+        fn _get_batch_dims(self: &Engine) -> Vec<u32>;
+
+        /// Return output dimensions of the engine, not including batch dimension.
+        /// The meaning of these dimensions is dependent on the network definition.
         fn get_output_dims(self: &Engine) -> Vec<u32>;
 
         /// Return the expected length of the output feature vector.
@@ -64,9 +64,25 @@ pub use crate::ffi::Options;
 
 use cxx::{Exception, UniquePtr};
 
+#[derive(Debug, Clone)]
+pub struct BatchDims {
+    pub min: u32,
+    pub opt: u32,
+    pub max: u32,
+}
+
 impl Engine {
     pub fn new(options: &Options) -> Result<UniquePtr<Engine>, Exception> {
         crate::ffi::load_engine(&options)
+    }
+
+    pub fn get_batch_dims(self: &Engine) -> BatchDims {
+        let vs = self._get_batch_dims();
+        BatchDims {
+            min: vs[0],
+            opt: vs[1],
+            max: vs[2],
+        }
     }
 }
 

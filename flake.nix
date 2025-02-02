@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
     jetpack-nixos.url = "github:anduril/jetpack-nixos";
   };
@@ -14,8 +14,8 @@
     flake-utils.lib.eachSystem supported-systems (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        cudaPackages = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages else pkgs.cudaPackages_11;
-        tensorrt = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages.tensorrt else pkgs.cudaPackages_11.tensorrt_8_6;
+        cudaPackages = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages else pkgs.cudaPackages;
+        tensorrt = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages.tensorrt else pkgs.cudaPackages.tensorrt;
         l4t-cuda = jetpack-nixos.legacyPackages.aarch64-linux.l4t-cuda;
         inherit (cudaPackages) cudatoolkit tensorrt_8_6 cudnn cuda_cudart;
 
@@ -43,10 +43,10 @@
           default = pkgs.mkShell {
             nativeBuildInputs = inputs;
             LIBCLANG_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.libclang.lib}/lib/";
-            TENSORRT_LIBRARIES = "${tensorrt}/lib";
+            TENSORRT_LIBRARIES = "${tensorrt.lib}/lib";
             CUDA_INCLUDE_DIRS = "${cudatoolkit}/include";
             CUDA_LIBRARIES = "${cudatoolkit}/lib";
-            LD_LIBRARY_PATH = "${tensorrt}/lib";
+            LD_LIBRARY_PATH = "${tensorrt.lib}/lib";
           };
         };
       });
