@@ -81,7 +81,7 @@ public:
     return rv;
   };
 
-  rust::Vec<uint32_t> jget_batch_dims() const {
+  rust::Vec<uint32_t> _get_batch_dims() const {
     rust::Vec<uint32_t> rv;
     rv.push_back(mMinBatchSize);
     rv.push_back(mOptBatchSize);
