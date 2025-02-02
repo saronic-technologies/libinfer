@@ -75,16 +75,23 @@ public:
 
   rust::Vec<uint32_t> get_input_dims() const {
     rust::Vec<uint32_t> rv;
-    rv.push_back(mInputBatchSize);
     for (int i = 0; i < 3; ++i) {
       rv.push_back(mInputDims[0].d[i]);
     }
     return rv;
   };
 
+  rust::Vec<uint32_t> jget_batch_dims() const {
+    rust::Vec<uint32_t> rv;
+    rv.push_back(mMinBatchSize);
+    rv.push_back(mOptBatchSize);
+    rv.push_back(mMaxBatchSize);
+    return rv;
+  }
+
   rust::Vec<uint32_t> get_output_dims() const {
     rust::Vec<uint32_t> rv;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 1; i < 3; ++i) {
       rv.push_back(mOutputDims[0].d[i]);
     }
     return rv;
@@ -101,7 +108,9 @@ private:
   std::vector<nvinfer1::Dims3> mInputDims;
   std::vector<nvinfer1::Dims> mOutputDims;
   std::vector<std::string> mIOTensorNames;
-  int32_t mInputBatchSize;
+  int32_t mMinBatchSize;
+  int32_t mOptBatchSize;
+  int32_t mMaxBatchSize;
   InputDataType mInputDataType;
   uint8_t mInputDataTypeSize;
 

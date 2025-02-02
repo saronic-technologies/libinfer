@@ -10,9 +10,14 @@ name = "libinfer"
 
 [dependencies]
 cxx = "1.0.116"
-approx = "0.5.1"
 
 [build-dependencies]
 cmake = "0.1.50"
 pkg-config = "0.3.30"
 cxx-build = "1.0.116"
+
+[dev-dependencies]
+anyhow = "1.0.95"
+approx = "0.5.1"
+clap = { version = "4.5.27", features = ["derive"] }
+
