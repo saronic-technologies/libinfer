@@ -17,7 +17,7 @@
         cudaPackages = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages else pkgs.cudaPackages;
         tensorrt = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages.tensorrt else pkgs.cudaPackages.tensorrt;
         l4t-cuda = jetpack-nixos.legacyPackages.aarch64-linux.l4t-cuda;
-        inherit (cudaPackages) cudatoolkit tensorrt_8_6 cudnn cuda_cudart;
+        inherit (cudaPackages) cudatoolkit cudnn cuda_cudart;
 
         inputs = with pkgs; [
           bacon

@@ -69,6 +69,8 @@ Engine::~Engine() {
     checkCudaErrorCode(cudaFree(buffer));
   }
 
+  checkCudaErrorCode(cudaStreamDestroy(mInferenceCudaStream));
+
   mBuffers.clear();
 }
 
@@ -126,6 +128,9 @@ void Engine::load() {
   // Storage for holding the input and output buffers
   // This will be passed to TensorRT for inference
   mBuffers.resize(mEngine->getNbIOTensors());
+
+  // Create the cuda stream that will be used for inference
+  checkCudaErrorCode(cudaStreamCreate(&mInferenceCudaStream));
 
   // Create a cuda stream
   cudaStream_t stream;
@@ -204,10 +209,6 @@ void Engine::load() {
 }
 
 rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
-  // Create the cuda stream that will be used for inference
-  cudaStream_t inferenceCudaStream;
-  checkCudaErrorCode(cudaStreamCreate(&inferenceCudaStream));
-
   const auto &dims = mInputDims[0];
 
   // Check that the passed batch size can be handled.
@@ -239,7 +240,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
 
   checkCudaErrorCode(cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
                                      cudaMemcpyHostToDevice,
-                                     inferenceCudaStream));
+                                     mInferenceCudaStream));
 
   // Ensure all dynamic bindings have been defined.
   if (!mContext->allInputDimensionsSpecified()) {
@@ -256,7 +257,7 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   }
 
   // Run inference.
-  bool status = mContext->enqueueV3(inferenceCudaStream);
+  bool status = mContext->enqueueV3(mInferenceCudaStream);
   if (!status) {
     throw std::runtime_error("enqueue failed");
   }
@@ -266,11 +267,9 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   resize(output, outputLen);
   checkCudaErrorCode(cudaMemcpyAsync(
       output.data(), static_cast<char *>(mBuffers[1]),
-      outputLen * sizeof(float), cudaMemcpyDeviceToHost, inferenceCudaStream));
+      outputLen * sizeof(float), cudaMemcpyDeviceToHost, mInferenceCudaStream));
 
-  // Synchronize the cuda stream
-  checkCudaErrorCode(cudaStreamSynchronize(inferenceCudaStream));
-  checkCudaErrorCode(cudaStreamDestroy(inferenceCudaStream));
+  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
 
   return output;
 }

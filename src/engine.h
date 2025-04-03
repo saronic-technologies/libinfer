@@ -121,6 +121,8 @@ private:
   std::unique_ptr<nvinfer1::IExecutionContext> mContext = nullptr;
   Logger mLogger;
 
+  cudaStream_t mInferenceCudaStream;
+
   // Options values.
   const std::string kEnginePath;
   const uint32_t kDeviceIndex;
