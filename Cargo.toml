@@ -9,7 +9,7 @@ repository = "https://github.com/saronic-technologies/libinfer"
 documentation = "https://docs.rs/libinfer"
 readme = "README.md"
 keywords = ["tensorrt", "inference", "machine-learning", "gpu", "cuda"]
-categories = ["api-bindings", "science::ml"]
+categories = ["api-bindings", "science"]
 exclude = [
     "test/*",
 ]
