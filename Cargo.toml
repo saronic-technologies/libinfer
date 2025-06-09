@@ -2,8 +2,14 @@
 name = "libinfer"
 version = "0.0.1"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "Rust interface to TensorRT for high-performance GPU inference"
+authors = ["Saronic Technologies"]
+license = "MIT"
+repository = "https://github.com/saronic-technologies/libinfer"
+documentation = "https://docs.rs/libinfer"
+readme = "README.md"
+keywords = ["tensorrt", "inference", "machine-learning", "gpu", "cuda"]
+categories = ["api-bindings", "science::ml"]
 
 [lib]
 name = "libinfer"
@@ -20,4 +26,26 @@ cxx-build = "1.0.116"
 anyhow = "1.0.95"
 approx = "0.5.1"
 clap = { version = "4.5.27", features = ["derive"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+
+[package.metadata.docs.rs]
+features = ["doc-only"]
+no-default-features = true
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+
+[[example]]
+name = "benchmark"
+path = "examples/benchmark.rs"
+
+[[example]]
+name = "dynamic"
+path = "examples/dynamic.rs"
+
+[[example]]
+name = "functional_test"
+path = "examples/functional_test.rs"
 
