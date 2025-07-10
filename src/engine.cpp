@@ -80,7 +80,7 @@ Engine::~Engine() {
 
 void Engine::load() {
   // Initialize plugins
-  initLibNvInferPlugins(&m_logger, "");
+  initLibNvInferPlugins(&mLogger, "");
 
 
   // Read the serialized model from disk
