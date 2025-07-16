@@ -10,6 +10,10 @@
 
 #include "libinfer/src/lib.rs.h"
 
+#include <NvInferPlugin.h>
+#include <NvInferPluginUtils.h>
+
+
 using namespace nvinfer1;
 
 // Implement our Rust friends.
@@ -75,6 +79,10 @@ Engine::~Engine() {
 }
 
 void Engine::load() {
+  // Initialize plugins
+  initLibNvInferPlugins(&mLogger, "");
+
+
   // Read the serialized model from disk
   std::ifstream file(kEnginePath, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
