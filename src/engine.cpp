@@ -224,9 +224,17 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
       input.size() / (dims.d[0] * dims.d[1] * dims.d[2] * mInputDataTypeSize);
 
   if (calculatedBatchSize < mMinBatchSize) {
-    throw std::runtime_error("Input is less the minimum batch size: " +
-                             std::to_string(calculatedBatchSize) + " > " +
-                             std::to_string(mMinBatchSize));
+    throw std::runtime_error(
+        "Input batch size too small.\n"
+        "Calculation: input.size() = " + std::to_string(input.size()) +
+        ", dims = [" + std::to_string(dims.d[0]) + ", " +
+        std::to_string(dims.d[1]) + ", " + std::to_string(dims.d[2]) + "], " +
+        "mInputDataTypeSize = " + std::to_string(mInputDataTypeSize) + "\n" +
+        "Computed: " + std::to_string(input.size()) + " / (" +
+        std::to_string(dims.d[0]) + " * " + std::to_string(dims.d[1]) + " * " +
+        std::to_string(dims.d[2]) + " * " + std::to_string(mInputDataTypeSize) +
+        ") = " + std::to_string(calculatedBatchSize) + "\n" +
+        "Which is less than mMinBatchSize = " + std::to_string(mMinBatchSize));
   }
 
   if (calculatedBatchSize > mMaxBatchSize) {
