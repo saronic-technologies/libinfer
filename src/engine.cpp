@@ -238,9 +238,17 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   }
 
   if (calculatedBatchSize > mMaxBatchSize) {
-    throw std::runtime_error("Input is greater than maximum batch size: " +
-                             std::to_string(calculatedBatchSize) + " > " +
-                             std::to_string(mMaxBatchSize));
+    throw std::runtime_error(
+        "Input batch size too large.\n"
+        "Calculation: input.size() = " + std::to_string(input.size()) +
+        ", dims = [" + std::to_string(dims.d[0]) + ", " +
+        std::to_string(dims.d[1]) + ", " + std::to_string(dims.d[2]) + "], " +
+        "mInputDataTypeSize = " + std::to_string(mInputDataTypeSize) + "\n" +
+        "Computed: " + std::to_string(input.size()) + " / (" +
+        std::to_string(dims.d[0]) + " * " + std::to_string(dims.d[1]) + " * " +
+        std::to_string(dims.d[2]) + " * " + std::to_string(mInputDataTypeSize) +
+        ") = " + std::to_string(calculatedBatchSize) + "\n" +
+        "Which is greater than mMaxBatchSize = " + std::to_string(mMaxBatchSize));
   }
 
   // Check that vector has enough elements for full input.
