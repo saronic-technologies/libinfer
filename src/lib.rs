@@ -14,6 +14,8 @@
 //! let options = Options {
 //!     path: "path/to/model.engine".into(),
 //!     device_index: 0,
+//!     input_shape: vec![3, 224, 224], // Example input shape for an image model without batch dimension
+//!     output_shape: vec![300, 13], // Example output shape for a classification model without batch dimension
 //! };
 //!
 //! // Load the engine
@@ -54,6 +56,16 @@ pub mod ffi {
         /// Refer to output from e.g. `nvidia-smi` for this value.
         /// A value of 0 typically refers to the first GPU.
         device_index: u32,
+
+        /// Input shape of the model, excluding batch dimension.
+        /// This should match the input tensor shape expected by the model.
+        /// For example, for an image model, this might be [3, 224, 224]
+        input_shape: Vec<u32>,
+
+        /// Output shape of the model, excluding batch dimension.
+        /// This should match the output tensor shape produced by the model.
+        /// For example, for rtdetr, this might be [300, 13]
+        output_shape: Vec<u32>,
     }
 
     unsafe extern "C++" {

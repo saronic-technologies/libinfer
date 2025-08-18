@@ -3,6 +3,7 @@
 #include "NvInfer.h"
 #include <chrono>
 #include <cstdlib>
+#include <vector>
 #include <cuda_runtime.h>
 #include <fstream>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -91,7 +92,7 @@ public:
 
   rust::Vec<uint32_t> get_output_dims() const {
     rust::Vec<uint32_t> rv;
-    for (int i = 1; i < 3; ++i) {
+    for (int i = 1; i < kOutputDims; ++i) {
       rv.push_back(mOutputDims[0].d[i]);
     }
     return rv;
@@ -105,7 +106,7 @@ private:
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
   std::vector<uint32_t> mOutputLengths{};
-  std::vector<nvinfer1::Dims3> mInputDims;
+  std::vector<nvinfer1::Dims> mInputDims;
   std::vector<nvinfer1::Dims> mOutputDims;
   std::vector<std::string> mIOTensorNames;
   int32_t mMinBatchSize;
@@ -126,6 +127,8 @@ private:
   // Options values.
   const std::string kEnginePath;
   const uint32_t kDeviceIndex;
+  const std::vector<uint32_t> kInputDims;
+  const std::vector<uint32_t> kOutputDims; 
 };
 
 // Rust friends.
