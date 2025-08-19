@@ -21,12 +21,13 @@
 use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, InputDataType, Options};
+use libinfer::ffi::{TensorInput, ShapeInfo};
 use std::{
     iter::repeat,
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tracing::{info, warn, error, Level};
+use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -45,6 +46,8 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let batch_size = input_dim[0];
     let input_len = input_dim.iter().fold(1, |acc, &e| acc * e) as usize;
     let dtype = engine.get_input_data_type();
+    let input_names = engine.get_input_names();
+    
     let input_data: Vec<u8> = match dtype {
         InputDataType::UINT8 => repeat(0).take(input_len).collect(),
         InputDataType::FP32 => repeat(0).take(4 * input_len).collect(),
@@ -54,10 +57,18 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
         },
     };
 
+    // Create input tensors for all inputs
+    let input_tensors: Vec<TensorInput> = input_names.iter().map(|name| {
+        TensorInput {
+            name: name.clone(),
+            tensor: input_data.clone(),
+        }
+    }).collect();
+
     // Warmup.
     info!("Warming up inference codepath...");
     for _ in 0..1024 {
-        let _output = engine.pin_mut().infer(&input_data).unwrap();
+        let _output = engine.pin_mut().infer(&input_tensors).unwrap();
     }
 
     // Measure.
@@ -65,7 +76,7 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let latencies = (0..num_runs)
         .map(|_| {
             let start = Instant::now();
-            let _output = engine.pin_mut().infer(&input_data).unwrap();
+            let _output = engine.pin_mut().infer(&input_tensors).unwrap();
             start.elapsed()
         })
         .collect::<Vec<Duration>>();
@@ -101,6 +112,14 @@ fn main() {
         let options = Options {
             path: args.path.to_string_lossy().to_string(),
             device_index: 0,
+            input_shape: vec![ShapeInfo {
+                name: "input".to_string(),
+                dims: vec![3, 640, 640], // Example shape - will be overridden by actual engine
+            }],
+            output_shape: vec![ShapeInfo {
+                name: "output".to_string(),
+                dims: vec![84, 8400], // Example shape - will be overridden by actual engine
+            }],
         };
         let mut engine = match Engine::new(&options) {
             Ok(engine) => engine,
@@ -126,6 +145,14 @@ fn main() {
     let b1_options = Options {
         path: b1_path.to_string_lossy().to_string(),
         device_index: 0,
+        input_shape: vec![ShapeInfo {
+            name: "images".to_string(),
+            dims: vec![3, 640, 640], // YOLOv8n input shape
+        }],
+        output_shape: vec![ShapeInfo {
+            name: "output0".to_string(),
+            dims: vec![84, 8400], // YOLOv8n output shape
+        }],
     };
     let mut b1_engine = match Engine::new(&b1_options) {
         Ok(engine) => engine,
@@ -145,6 +172,14 @@ fn main() {
         let b2_options = Options {
             path: b2_path.to_string_lossy().to_string(),
             device_index: 0,
+            input_shape: vec![ShapeInfo {
+                name: "images".to_string(),
+                dims: vec![3, 640, 640],
+            }],
+            output_shape: vec![ShapeInfo {
+                name: "output0".to_string(),
+                dims: vec![84, 8400],
+            }],
         };
         match Engine::new(&b2_options) {
             Ok(mut b2_engine) => {
@@ -160,6 +195,14 @@ fn main() {
         let b4_options = Options {
             path: b4_path.to_string_lossy().to_string(),
             device_index: 0,
+            input_shape: vec![ShapeInfo {
+                name: "images".to_string(),
+                dims: vec![3, 640, 640],
+            }],
+            output_shape: vec![ShapeInfo {
+                name: "output0".to_string(),
+                dims: vec![84, 8400],
+            }],
         };
         match Engine::new(&b4_options) {
             Ok(mut b4_engine) => {
@@ -175,6 +218,14 @@ fn main() {
         let b8_options = Options {
             path: b8_path.to_string_lossy().to_string(),
             device_index: 0,
+            input_shape: vec![ShapeInfo {
+                name: "images".to_string(),
+                dims: vec![3, 640, 640],
+            }],
+            output_shape: vec![ShapeInfo {
+                name: "output0".to_string(),
+                dims: vec![84, 8400],
+            }],
         };
         match Engine::new(&b8_options) {
             Ok(mut b8_engine) => {
@@ -190,6 +241,14 @@ fn main() {
         let b16_options = Options {
             path: b16_path.to_string_lossy().to_string(),
             device_index: 0,
+            input_shape: vec![ShapeInfo {
+                name: "images".to_string(),
+                dims: vec![3, 640, 640],
+            }],
+            output_shape: vec![ShapeInfo {
+                name: "output0".to_string(),
+                dims: vec![84, 8400],
+            }],
         };
         match Engine::new(&b16_options) {
             Ok(mut b16_engine) => {

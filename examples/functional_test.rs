@@ -26,6 +26,7 @@ use approx::assert_relative_eq;
 use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, Options};
+use libinfer::ffi::{TensorInput, ShapeInfo};
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
@@ -33,7 +34,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
 };
-use tracing::{info, warn, error, Level};
+use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -98,7 +99,10 @@ fn test_output_dim(engine: &UniquePtr<Engine>) {
 fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: &[f32]) {
     info!("Testing output features...");
     let batch_size = engine.get_batch_dims().opt;
-    let ext_input = {
+    let input_names = engine.get_input_names();
+    
+    // Create TensorInput for the first input tensor
+    let ext_input_data = {
         let mut v = input.to_vec();
         if batch_size > 1 {
             v.extend(
@@ -110,6 +114,11 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
         v
     };
 
+    let input_tensors = vec![TensorInput {
+        name: input_names[0].clone(),
+        tensor: ext_input_data,
+    }];
+
     let expected_output_size = engine
         .get_output_dims()
         .iter()
@@ -119,7 +128,10 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
 
-    let actual = engine.pin_mut().infer(&ext_input).unwrap();
+    let output_tensors = engine.pin_mut().infer(&input_tensors).unwrap();
+    
+    // Get the first output tensor
+    let actual = &output_tensors[0].data;
 
     // Check that the entire output length is correct.
     assert_eq!(actual.len(), expected_output_size);
@@ -155,6 +167,14 @@ fn main() {
     let options = Options {
         path: engine_path.to_string_lossy().to_string(),
         device_index: 0,
+        input_shape: vec![ShapeInfo {
+            name: "images".to_string(),
+            dims: vec![3, 640, 640], // YOLOv8n input shape
+        }],
+        output_shape: vec![ShapeInfo {
+            name: "output0".to_string(),
+            dims: vec![84, 8400], // YOLOv8n output shape
+        }],
     };
 
     let mut engine = match Engine::new(&options) {

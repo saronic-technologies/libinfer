@@ -16,6 +16,7 @@
 
 use clap::Parser;
 use libinfer::{Engine, InputDataType, Options};
+use libinfer::ffi::{TensorInput, ShapeInfo};
 use std::path::PathBuf;
 use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
@@ -49,10 +50,19 @@ fn main() {
 
     info!("Loading TensorRT engine from: {}", args.path.display());
 
-    // Create engine options
+    // Create engine options with placeholder input/output shapes
+    // In a real application, these would match your model's actual tensor shapes
     let options = Options {
         path: args.path.to_string_lossy().to_string(),
         device_index: args.device,
+        input_shape: vec![ShapeInfo {
+            name: "input".to_string(),
+            dims: vec![3, 224, 224], // Example shape - will be overridden by actual engine
+        }],
+        output_shape: vec![ShapeInfo {
+            name: "output".to_string(), 
+            dims: vec![1000], // Example shape - will be overridden by actual engine
+        }],
     };
 
     // Load the engine
@@ -63,27 +73,42 @@ fn main() {
 
     // Print model information
     info!("Engine loaded successfully");
-    info!("Input dimensions: {:?}", engine.get_input_dims());
-    info!("Output dimensions: {:?}", engine.get_output_dims());
+    info!("Number of inputs: {}", engine.get_num_inputs());
+    info!("Number of outputs: {}", engine.get_num_outputs());
+    info!("Input names: {:?}", engine.get_input_names());
+    info!("Output names: {:?}", engine.get_output_names());
+    info!("Input dimensions (first input): {:?}", engine.get_input_dims());
+    info!("Output dimensions (first output): {:?}", engine.get_output_dims());
     info!("Batch dimensions: {:?}", engine.get_batch_dims());
     info!("Input data type: {:?}", engine.get_input_data_type());
 
-    // Create input data based on input dimensions and data type
-    let input_dims = engine.get_input_dims();
-    let input_size = input_dims.iter().fold(1, |acc, &e| acc * e as usize);
+    // Create input tensors for all inputs
+    let input_names = engine.get_input_names();
+    let mut input_tensors = Vec::new();
+    
+    for input_name in &input_names {
+        // For simplicity, use the first input's dimensions for all inputs
+        let input_dims = engine.get_input_dims();
+        let input_size = input_dims.iter().fold(1, |acc, &e| acc * e as usize);
 
-    // Create appropriate input based on data type
-    let input = match engine.get_input_data_type() {
-        InputDataType::UINT8 => vec![0u8; input_size],
-        InputDataType::FP32 => {
-            // For FP32, we need 4 bytes per element
-            vec![0u8; input_size * 4]
-        }
-        _ => {
-            error!("Unsupported input data type");
-            std::process::exit(1);
-        }
-    };
+        // Create appropriate input data based on data type
+        let input_data = match engine.get_input_data_type() {
+            InputDataType::UINT8 => vec![0u8; input_size],
+            InputDataType::FP32 => {
+                // For FP32, we need 4 bytes per element
+                vec![0u8; input_size * 4]
+            }
+            _ => {
+                error!("Unsupported input data type");
+                std::process::exit(1);
+            }
+        };
+
+        input_tensors.push(TensorInput {
+            name: input_name.clone(),
+            tensor: input_data,
+        });
+    }
 
     info!("Running inference for {} iterations...", args.iterations);
 
@@ -93,11 +118,22 @@ fn main() {
             info!("Iteration {}/{}", i, args.iterations);
         }
 
-        let result = engine.pin_mut().infer(&input);
+        let result = engine.pin_mut().infer(&input_tensors);
 
-        if let Err(e) = &result {
-            error!("Inference error: {e}");
-            break;
+        match result {
+            Ok(outputs) => {
+                if i == 0 {
+                    // Print output information on first iteration
+                    info!("Inference successful! Output tensors:");
+                    for output in &outputs {
+                        info!("  '{}': {} elements", output.name, output.data.len());
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Inference error: {e}");
+                break;
+            }
         }
     }
 
