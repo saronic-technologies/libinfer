@@ -72,11 +72,11 @@ public:
   void load();
 
   // Run inference and return output tensor.
-  rust::Vec<float> infer(const rust::Vec<uint8_t> &input);
+  rust::Vec<float> infer(const rust::Vec<TensorInput> &input);
 
   rust::Vec<uint32_t> get_input_dims() const {
     rust::Vec<uint32_t> rv;
-    for (int i = 0; i < 3; ++i) {
+    for (size_t i = 0; i < kInputDims.size(); ++i) {
       rv.push_back(mInputDims[0].d[i]);
     }
     return rv;
@@ -92,7 +92,7 @@ public:
 
   rust::Vec<uint32_t> get_output_dims() const {
     rust::Vec<uint32_t> rv;
-    for (int i = 1; i < kOutputDims; ++i) {
+    for (size_t i = 1; i < kOutputDims.size(); ++i) {
       rv.push_back(mOutputDims[0].d[i]);
     }
     return rv;

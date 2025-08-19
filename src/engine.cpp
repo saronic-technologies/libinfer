@@ -216,7 +216,7 @@ void Engine::load() {
   checkCudaErrorCode(cudaStreamDestroy(stream));
 }
 
-rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
+rust::Vec<float> Engine::infer(const rust::Vec<TensorInput> &input) {
   const auto &dims = mInputDims[0];
 
   // Check that the passed batch size can be handled.

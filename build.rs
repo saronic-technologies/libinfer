@@ -9,7 +9,8 @@ fn main() {
     let fmt = pkg_config::probe_library("fmt").unwrap();
     let spdlog = pkg_config::probe_library("spdlog").unwrap();
 
-    cxx_build::bridge("src/lib.rs")
+    let mut builder = cxx_build::bridge("src/lib.rs");
+    builder
         .file("src/engine.cpp")
         .include(cuda_incl)
         .includes(spdlog.include_paths)
@@ -18,8 +19,25 @@ fn main() {
         .flag("-O3")
         .flag("-Wall")
         .flag("-Werror")
-        .define("SPDLOG_FMT_EXTERNAL", Some("1"))
-        .compile("libinfer-bridge");
+        .define("SPDLOG_FMT_EXTERNAL", Some("1"));
+
+    // Add system include paths if they exist in environment
+    if let Ok(cplus_include_path) = env::var("CPLUS_INCLUDE_PATH") {
+        for path in cplus_include_path.split(':') {
+            if !path.is_empty() {
+                builder.include(path);
+            }
+        }
+    }
+    if let Ok(c_include_path) = env::var("C_INCLUDE_PATH") {
+        for path in c_include_path.split(':') {
+            if !path.is_empty() {
+                builder.include(path);
+            }
+        }
+    }
+
+    builder.compile("libinfer-bridge");
 
     println!("cargo:rustc-link-search={}", trt_libs);
     println!("cargo:rustc-link-search={}", cuda_libs);

@@ -14,8 +14,8 @@
 //! let options = Options {
 //!     path: "path/to/model.engine".into(),
 //!     device_index: 0,
-//!     input_shape: vec![3, 224, 224], // Example input shape for an image model without batch dimension
-//!     output_shape: vec![300, 13], // Example output shape for a classification model without batch dimension
+//!     input_shapes: vec![3, 224, 224], // Example input shape for an image model without batch dimension
+//!     output_shapes: vec![300, 13], // Example output shape for a classification model without batch dimension
 //! };
 //!
 //! // Load the engine
@@ -45,6 +45,29 @@ pub mod ffi {
     }
 
     #[derive(Debug, Clone)]
+    /// Input shape info
+    struct ShapeInfo {
+        /// Tensor input/output name
+        name: String,
+        /// Tensor input/output shape
+        dims: Vec<u32>,
+    }
+
+    #[derive(Debug, Clone)]
+    /// Tensor input class
+    struct TensorInput {
+        name: String,
+        tensor: Vec<u8>,
+    }
+    
+    #[derive(Debug, Clone)]
+    /// Tensor output class
+    struct TensorOutput {
+        name: String,
+        data: Vec<f32>,
+    }
+
+    #[derive(Debug, Clone)]
     /// Options for creating the inference engine.
     struct Options {
         /// Full path to the TensorRT engine file to load.
@@ -57,15 +80,15 @@ pub mod ffi {
         /// A value of 0 typically refers to the first GPU.
         device_index: u32,
 
-        /// Input shape of the model, excluding batch dimension.
+        /// Input shapes of the model, excluding batch dimensions.
         /// This should match the input tensor shape expected by the model.
-        /// For example, for an image model, this might be [3, 224, 224]
-        input_shape: Vec<u32>,
+        /// For example, for an image model, this might be [[3, 224, 224]]
+        input_shape: Vec<ShapeInfo>,
 
         /// Output shape of the model, excluding batch dimension.
         /// This should match the output tensor shape produced by the model.
-        /// For example, for rtdetr, this might be [300, 13]
-        output_shape: Vec<u32>,
+        /// For example, for rtdetr, this might be [[300, 13]]
+        output_shape: Vec<ShapeInfo>,
     }
 
     unsafe extern "C++" {
@@ -129,7 +152,7 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<u8>) -> Result<Vec<f32>>;
+        fn infer(self: Pin<&mut Engine>, input: &Vec<TensorInput>) -> Result<Vec<TensorOutput>>;
     }
 }
 
