@@ -28,9 +28,6 @@
           cmake-format
           clang
           clang-tools
-          stdenv.cc.cc.lib
-          gcc
-          glibc.dev
           linuxHeaders
           llvmPackages.compiler-rt
           nixpkgs-fmt
@@ -62,7 +59,6 @@
         devShells = {
           default = pkgs.mkShell rec {
             nativeBuildInputs = inputs;
-            buildInputs = inputs;
             LIBCLANG_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux "${pkgs.libclang.lib}/lib/";
             TENSORRT_LIBRARIES = "${tensorrt.lib}/lib";
             CUDA_INCLUDE_DIRS = "${cudatoolkit}/include";

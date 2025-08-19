@@ -12,6 +12,9 @@
 #include "rust/cxx.h"
 
 struct Options;
+struct ShapeInfo;
+struct TensorInput;
+struct TensorOutput;
 enum class InputDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
@@ -71,13 +74,16 @@ public:
   // Load and prepare the network for inference.
   void load();
 
-  // Run inference and return output tensor.
-  rust::Vec<float> infer(const rust::Vec<TensorInput> &input);
+  // Run inference and return output tensors.
+  rust::Vec<TensorOutput> infer(const rust::Vec<TensorInput> &input);
 
+  // Get dimensions for the first input tensor (for backward compatibility)
   rust::Vec<uint32_t> get_input_dims() const {
     rust::Vec<uint32_t> rv;
-    for (size_t i = 0; i < kInputDims.size(); ++i) {
-      rv.push_back(mInputDims[0].d[i]);
+    if (!mInputDims.empty()) {
+      for (int i = 1; i < mInputDims[0].nbDims; ++i) { // Skip batch dimension
+        rv.push_back(mInputDims[0].d[i]);
+      }
     }
     return rv;
   };
@@ -90,17 +96,26 @@ public:
     return rv;
   }
 
+  // Get dimensions for the first output tensor (for backward compatibility)  
   rust::Vec<uint32_t> get_output_dims() const {
     rust::Vec<uint32_t> rv;
-    for (size_t i = 1; i < kOutputDims.size(); ++i) {
-      rv.push_back(mOutputDims[0].d[i]);
+    if (!mOutputDims.empty()) {
+      for (int i = 1; i < mOutputDims[0].nbDims; ++i) { // Skip batch dimension
+        rv.push_back(mOutputDims[0].d[i]);
+      }
     }
     return rv;
   };
 
-  uint32_t get_output_len() const { return mOutputLengths[0]; }
+  uint32_t get_output_len() const { return mOutputLengths.empty() ? 0 : mOutputLengths[0]; }
 
   InputDataType get_input_data_type() const { return mInputDataType; }
+
+  // New methods for multi-tensor support
+  rust::Vec<rust::String> get_input_names() const;
+  rust::Vec<rust::String> get_output_names() const;
+  size_t get_num_inputs() const;
+  size_t get_num_outputs() const;
 
 private:
   // Holds pointers to the input and output GPU buffers
@@ -127,8 +142,8 @@ private:
   // Options values.
   const std::string kEnginePath;
   const uint32_t kDeviceIndex;
-  const std::vector<uint32_t> kInputDims;
-  const std::vector<uint32_t> kOutputDims; 
+  const std::vector<std::vector<uint32_t>> kInputDims;
+  const std::vector<std::vector<uint32_t>> kOutputDims; 
 };
 
 // Rust friends.

@@ -134,6 +134,18 @@ pub mod ffi {
         /// The input data type (UINT8 or FP32) that this model expects.
         fn get_input_data_type(self: &Engine) -> InputDataType;
 
+        /// Get the names of all input tensors.
+        fn get_input_names(self: &Engine) -> Vec<String>;
+
+        /// Get the names of all output tensors.
+        fn get_output_names(self: &Engine) -> Vec<String>;
+
+        /// Get the number of input tensors.
+        fn get_num_inputs(self: &Engine) -> usize;
+
+        /// Get the number of output tensors.
+        fn get_num_outputs(self: &Engine) -> usize;
+
         /// Run inference on an input batch.
         ///
         /// # Arguments
