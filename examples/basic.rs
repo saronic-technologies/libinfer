@@ -16,7 +16,7 @@
 
 use clap::Parser;
 use libinfer::{Engine, InputDataType, Options};
-use libinfer::ffi::{TensorInput, ShapeInfo};
+use libinfer::ffi::TensorInput;
 use std::path::PathBuf;
 use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
@@ -50,19 +50,10 @@ fn main() {
 
     info!("Loading TensorRT engine from: {}", args.path.display());
 
-    // Create engine options with placeholder input/output shapes
-    // In a real application, these would match your model's actual tensor shapes
+    // Create engine options
     let options = Options {
         path: args.path.to_string_lossy().to_string(),
         device_index: args.device,
-        input_shape: vec![ShapeInfo {
-            name: "input".to_string(),
-            dims: vec![3, 224, 224], // Example shape - will be overridden by actual engine
-        }],
-        output_shape: vec![ShapeInfo {
-            name: "output".to_string(), 
-            dims: vec![1000], // Example shape - will be overridden by actual engine
-        }],
     };
 
     // Load the engine
@@ -75,21 +66,29 @@ fn main() {
     info!("Engine loaded successfully");
     info!("Number of inputs: {}", engine.get_num_inputs());
     info!("Number of outputs: {}", engine.get_num_outputs());
-    info!("Input names: {:?}", engine.get_input_names());
-    info!("Output names: {:?}", engine.get_output_names());
-    info!("Input dimensions (first input): {:?}", engine.get_input_dims());
-    info!("Output dimensions (first output): {:?}", engine.get_output_dims());
     info!("Batch dimensions: {:?}", engine.get_batch_dims());
     info!("Input data type: {:?}", engine.get_input_data_type());
+    
+    // Print detailed information for all input tensors
+    let input_dims = engine.get_input_dims();
+    info!("Input tensors:");
+    for input_info in &input_dims {
+        info!("  '{}': {:?}", input_info.name, input_info.dims);
+    }
+    
+    // Print detailed information for all output tensors
+    let output_dims = engine.get_output_dims();
+    info!("Output tensors:");
+    for output_info in &output_dims {
+        info!("  '{}': {:?}", output_info.name, output_info.dims);
+    }
 
     // Create input tensors for all inputs
-    let input_names = engine.get_input_names();
     let mut input_tensors = Vec::new();
     
-    for input_name in &input_names {
-        // For simplicity, use the first input's dimensions for all inputs
-        let input_dims = engine.get_input_dims();
-        let input_size = input_dims.iter().fold(1, |acc, &e| acc * e as usize);
+    for input_info in &input_dims {
+        // Calculate tensor size from dimensions
+        let input_size = input_info.dims.iter().fold(1, |acc, &e| acc * e as usize);
 
         // Create appropriate input data based on data type
         let input_data = match engine.get_input_data_type() {
@@ -105,7 +104,7 @@ fn main() {
         };
 
         input_tensors.push(TensorInput {
-            name: input_name.clone(),
+            name: input_info.name.clone(),
             tensor: input_data,
         });
     }

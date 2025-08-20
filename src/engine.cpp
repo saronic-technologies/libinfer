@@ -42,23 +42,8 @@ template <typename T> static void resize(rust::Vec<T> &v, size_t len) {
   }
 }
 
-// Helper function to extract dimension vectors from ShapeInfo
-static std::vector<std::vector<uint32_t>> extractDimsFromShapeInfo(const rust::Vec<ShapeInfo> &shapeInfos) {
-  std::vector<std::vector<uint32_t>> result;
-  for (const auto &shapeInfo : shapeInfos) {
-    std::vector<uint32_t> dims;
-    for (uint32_t dim : shapeInfo.dims) {
-      dims.push_back(dim);
-    }
-    result.push_back(dims);
-  }
-  return result;
-}
-
 Engine::Engine(const Options &options)
-    : kEnginePath(options.path), kDeviceIndex(options.device_index),
-      kInputDims(extractDimsFromShapeInfo(options.input_shape)),
-      kOutputDims(extractDimsFromShapeInfo(options.output_shape)) {
+    : kEnginePath(options.path), kDeviceIndex(options.device_index) {
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -405,4 +390,44 @@ size_t Engine::get_num_outputs() const {
     }
   }
   return count;
+}
+
+rust::Vec<TensorInfo> Engine::get_input_dims() const {
+  rust::Vec<TensorInfo> result;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kINPUT) {
+      const auto dims = mEngine->getTensorShape(tensorName);
+      TensorInfo info;
+      info.name = std::string(tensorName);
+      resize(info.dims, 0);
+      // Skip batch dimension (index 0)
+      for (int j = 1; j < dims.nbDims; ++j) {
+        info.dims.push_back(static_cast<uint32_t>(dims.d[j]));
+      }
+      result.push_back(std::move(info));
+    }
+  }
+  return result;
+}
+
+rust::Vec<TensorInfo> Engine::get_output_dims() const {
+  rust::Vec<TensorInfo> result;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kOUTPUT) {
+      const auto dims = mEngine->getTensorShape(tensorName);
+      TensorInfo info;
+      info.name = std::string(tensorName);
+      resize(info.dims, 0);
+      // Skip batch dimension (index 0)
+      for (int j = 1; j < dims.nbDims; ++j) {
+        info.dims.push_back(static_cast<uint32_t>(dims.d[j]));
+      }
+      result.push_back(std::move(info));
+    }
+  }
+  return result;
 }

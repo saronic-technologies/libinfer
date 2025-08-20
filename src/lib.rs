@@ -44,12 +44,11 @@ pub mod ffi {
         FP32,
     }
 
+
     #[derive(Debug, Clone)]
-    /// Input shape info
-    struct ShapeInfo {
-        /// Tensor input/output name
+    /// Tensor dimension information
+    struct TensorInfo {
         name: String,
-        /// Tensor input/output shape
         dims: Vec<u32>,
     }
 
@@ -79,16 +78,6 @@ pub mod ffi {
         /// Refer to output from e.g. `nvidia-smi` for this value.
         /// A value of 0 typically refers to the first GPU.
         device_index: u32,
-
-        /// Input shapes of the model, excluding batch dimensions.
-        /// This should match the input tensor shape expected by the model.
-        /// For example, for an image model, this might be [[3, 224, 224]]
-        input_shape: Vec<ShapeInfo>,
-
-        /// Output shape of the model, excluding batch dimension.
-        /// This should match the output tensor shape produced by the model.
-        /// For example, for rtdetr, this might be [[300, 13]]
-        output_shape: Vec<ShapeInfo>,
     }
 
     unsafe extern "C++" {
@@ -103,23 +92,21 @@ pub mod ffi {
         /// A Result containing either the loaded engine or an error message.
         fn load_engine(options: &Options) -> Result<UniquePtr<Engine>>;
 
-        /// Return the input dimensions of the engine, not including the batch dimension.
+        /// Return the input dimensions of all input tensors, not including the batch dimension.
         ///
         /// # Returns
-        /// A vector of dimensions in the format [Channels, Height, Width] for image inputs,
-        /// or the appropriate dimensions for the model's input tensor.
-        fn get_input_dims(self: &Engine) -> Vec<u32>;
+        /// A vector of TensorInfo containing name and dimensions for each input tensor.
+        fn get_input_dims(self: &Engine) -> Vec<TensorInfo>;
 
         /// Return the minimum, optimized, and maximum batch dimension for this engine.
         /// This is an internal function used by `get_batch_dims`.
         fn _get_batch_dims(self: &Engine) -> Vec<u32>;
 
-        /// Return output dimensions of the engine, not including batch dimension.
+        /// Return output dimensions of all output tensors, not including batch dimension.
         ///
         /// # Returns
-        /// A vector representing the output tensor dimensions. The meaning of these
-        /// dimensions is dependent on the network definition.
-        fn get_output_dims(self: &Engine) -> Vec<u32>;
+        /// A vector of TensorInfo containing name and dimensions for each output tensor.
+        fn get_output_dims(self: &Engine) -> Vec<TensorInfo>;
 
         /// Return the expected length of the output feature vector.
         ///
@@ -171,6 +158,7 @@ pub mod ffi {
 pub use crate::ffi::Engine;
 pub use crate::ffi::InputDataType;
 pub use crate::ffi::Options;
+pub use crate::ffi::TensorInfo;
 
 use cxx::{Exception, UniquePtr};
 

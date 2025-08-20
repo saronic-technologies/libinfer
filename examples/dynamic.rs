@@ -22,7 +22,7 @@
 
 use clap::Parser;
 use libinfer::{Engine, InputDataType, Options};
-use libinfer::ffi::{TensorInput, ShapeInfo};
+use libinfer::ffi::TensorInput;
 use std::{path::PathBuf, time::Instant};
 use tracing::{info, warn, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
@@ -52,18 +52,10 @@ fn main() {
 
     info!("Loading TensorRT engine from: {}", args.path.display());
 
-    // Create engine options with placeholder shapes
+    // Create engine options
     let options = Options {
         path: args.path.to_string_lossy().to_string(),
         device_index: args.device,
-        input_shape: vec![ShapeInfo {
-            name: "input".to_string(),
-            dims: vec![3, 640, 640], // Example shape - will be overridden by actual engine
-        }],
-        output_shape: vec![ShapeInfo {
-            name: "output".to_string(),
-            dims: vec![84, 8400], // Example shape - will be overridden by actual engine
-        }],
     };
 
     // Load the engine
@@ -95,7 +87,11 @@ fn main() {
 
     // Create input data based on input dimensions and data type
     let input_dims = engine.get_input_dims();
-    let input_size_per_item = input_dims.iter().fold(1, |acc, &e| acc * e as usize);
+    let input_size_per_item = if !input_dims.is_empty() {
+        input_dims[0].dims.iter().fold(1, |acc, &e| acc * e as usize)
+    } else {
+        0
+    };
     let input_names = engine.get_input_names();
 
     // Test different batch sizes within the supported range

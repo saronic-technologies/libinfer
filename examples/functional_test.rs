@@ -26,7 +26,7 @@ use approx::assert_relative_eq;
 use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, Options};
-use libinfer::ffi::{TensorInput, ShapeInfo};
+use libinfer::ffi::TensorInput;
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
@@ -74,11 +74,13 @@ fn parse_file_to_float_vec(path: PathBuf) -> Result<Vec<f32>> {
 }
 
 fn test_input_dim(engine: &UniquePtr<Engine>) {
-    let input_dim = engine.get_input_dims();
-    assert_eq!(input_dim[0], 3);
-    assert_eq!(input_dim[1], 640);
-    assert_eq!(input_dim[2], 640);
-    info!("Input dimensions: {input_dim:?}");
+    let input_dims = engine.get_input_dims();
+    assert_eq!(input_dims.len(), 1); // Expecting one input tensor
+    let input_dim = &input_dims[0];
+    assert_eq!(input_dim.dims[0], 3);
+    assert_eq!(input_dim.dims[1], 640);
+    assert_eq!(input_dim.dims[2], 640);
+    info!("Input dimensions: '{}' -> {:?}", input_dim.name, input_dim.dims);
 }
 
 fn test_batch_dim(engine: &UniquePtr<Engine>) {
@@ -90,10 +92,12 @@ fn test_batch_dim(engine: &UniquePtr<Engine>) {
 }
 
 fn test_output_dim(engine: &UniquePtr<Engine>) {
-    let output_dim = engine.get_output_dims();
-    assert_eq!(output_dim[0], 84);
-    assert_eq!(output_dim[1], 8400);
-    info!("Output dimensions: {output_dim:?}");
+    let output_dims = engine.get_output_dims();
+    assert_eq!(output_dims.len(), 1); // Expecting one output tensor
+    let output_dim = &output_dims[0];
+    assert_eq!(output_dim.dims[0], 84);
+    assert_eq!(output_dim.dims[1], 8400);
+    info!("Output dimensions: '{}' -> {:?}", output_dim.name, output_dim.dims);
 }
 
 fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: &[f32]) {
@@ -119,12 +123,13 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
         tensor: ext_input_data,
     }];
 
-    let expected_output_size = engine
-        .get_output_dims()
+    let output_dims = engine.get_output_dims();
+    let expected_output_size = output_dims[0]
+        .dims
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
-    let batch_element_size = engine
-        .get_output_dims()
+    let batch_element_size = output_dims[0]
+        .dims
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
 
@@ -167,14 +172,6 @@ fn main() {
     let options = Options {
         path: engine_path.to_string_lossy().to_string(),
         device_index: 0,
-        input_shape: vec![ShapeInfo {
-            name: "images".to_string(),
-            dims: vec![3, 640, 640], // YOLOv8n input shape
-        }],
-        output_shape: vec![ShapeInfo {
-            name: "output0".to_string(),
-            dims: vec![84, 8400], // YOLOv8n output shape
-        }],
     };
 
     let mut engine = match Engine::new(&options) {
