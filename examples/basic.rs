@@ -105,7 +105,7 @@ fn main() {
 
         input_tensors.push(InputTensor {
             name: input_info.name.clone(),
-            tensor: input_data,
+            data: input_data,
         });
     }
 

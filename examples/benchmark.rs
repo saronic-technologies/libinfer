@@ -65,7 +65,7 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let input_tensors: Vec<InputTensor> = input_names.iter().map(|name| {
         InputTensor {
             name: name.clone(),
-            tensor: input_data.clone(),
+            data: input_data.clone(),
         }
     }).collect();
 
