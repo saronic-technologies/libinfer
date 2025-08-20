@@ -82,7 +82,6 @@ See the documentation in each example file for specific requirements.
 
 ## Future Work
 - Allow passing device pointers and CUDA streams for stream synchronization events
-- Support for multiple inputs and outputs
 - Async execution support
 
 ## Credits
