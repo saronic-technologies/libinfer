@@ -8,28 +8,38 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use libinfer::{Engine, Options};
+//! use libinfer::{Engine, Options, TensorInput, TensorOutput, TensorInfo};
 //!
 //! // Create engine options
 //! let options = Options {
 //!     path: "path/to/model.engine".into(),
 //!     device_index: 0,
-//!     input_shapes: vec![3, 224, 224], // Example input shape for an image model without batch dimension
-//!     output_shapes: vec![300, 13], // Example output shape for a classification model without batch dimension
 //! };
 //!
 //! // Load the engine
 //! let mut engine = Engine::new(&options).unwrap();
 //!
-//! // Get input dimensions and prepare input data
-//! let dims = engine.get_input_dims();
-//! let input_size = dims.iter().fold(1, |acc, &e| acc * e as usize);
-//! let input = vec![0u8; input_size];
+//! // Get input dimensions for all tensors
+//! let input_dims: Vec<TensorInfo> = engine.get_input_dims();
+//! 
+//! // Create input tensors
+//! let mut input_tensors: Vec<TensorInput> = Vec::new();
+//! for tensor_info in input_dims {
+//!     let size = tensor_info.dims.iter().fold(1, |acc, &d| acc * d as usize);
+//!     let input_tensor = TensorInput {
+//!         name: tensor_info.name,
+//!         tensor: vec![0u8; size],
+//!     };
+//!     input_tensors.push(input_tensor);
+//! }
 //!
 //! // Run inference
-//! let output = engine.pin_mut().infer(&input).unwrap();
+//! let outputs: Vec<TensorOutput> = engine.pin_mut().infer(&input_tensors).unwrap();
 //!
-//! // Process output...
+//! // Process outputs...
+//! for output in outputs {
+//!     println!("Output '{}': {} elements", output.name, output.data.len());
+//! }
 //! ```
 
 #[cxx::bridge]
@@ -155,10 +165,15 @@ pub mod ffi {
     }
 }
 
-pub use crate::ffi::Engine;
-pub use crate::ffi::InputDataType;
-pub use crate::ffi::Options;
-pub use crate::ffi::TensorInfo;
+// Primary exports
+pub use crate::ffi::{
+    Engine,
+    InputDataType,
+    Options,
+    TensorInfo,
+    TensorInput,
+    TensorOutput,
+};
 
 use cxx::{Exception, UniquePtr};
 
