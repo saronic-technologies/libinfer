@@ -121,10 +121,10 @@ fn main() {
         };
 
         // Create input tensors for all inputs
-        let input_tensors: Vec<TensorInput> = input_names.iter().map(|name| {
-            TensorInput {
+        let input_tensors: Vec<InputTensor> = input_names.iter().map(|name| {
+            InputTensor {
                 name: name.clone(),
-                tensor: input_data.clone(),
+                data: input_data.clone(),
             }
         }).collect();
 

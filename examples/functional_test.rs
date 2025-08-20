@@ -118,9 +118,9 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
         v
     };
 
-    let input_tensors = vec![TensorInput {
+    let input_tensors = vec![InputTensor {
         name: input_names[0].clone(),
-        tensor: ext_input_data,
+        data: ext_input_data,
     }];
 
     let output_dims = engine.get_output_dims();
