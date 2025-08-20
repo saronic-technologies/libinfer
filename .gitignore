@@ -2,3 +2,5 @@ target/
 .vscode
 *.onnx
 *.engine
+.claude/
+.clangd

@@ -1,5 +1,6 @@
 #include "engine.h"
 
+#include <NvInferRuntimeBase.h>
 #include <NvOnnxParser.h>
 #include <algorithm>
 #include <filesystem>
@@ -7,6 +8,8 @@
 #include <iostream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
+#include <unordered_map>
 
 #include "libinfer/src/lib.rs.h"
 
@@ -154,8 +157,7 @@ void Engine::load() {
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
       // Store the input dims for later use.
-      mInputDims.emplace_back(tensorShape.d[1], tensorShape.d[2],
-                              tensorShape.d[3]);
+      mInputDims.push_back(tensorShape);
       switch (tensorDataType) {
       case DataType::kFLOAT:
         mInputDataType = InputDataType::FP32;
@@ -216,68 +218,224 @@ void Engine::load() {
   checkCudaErrorCode(cudaStreamDestroy(stream));
 }
 
-rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
-  const auto &dims = mInputDims[0];
-
-  // Check that the passed batch size can be handled.
-  const int32_t calculatedBatchSize =
-      input.size() / (dims.d[0] * dims.d[1] * dims.d[2] * mInputDataTypeSize);
-
-  if (calculatedBatchSize < mMinBatchSize) {
-    throw std::runtime_error("Input is less the minimum batch size: " +
-                             std::to_string(calculatedBatchSize) + " > " +
-                             std::to_string(mMinBatchSize));
+rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
+  // Create a map from tensor name to input data for easy lookup
+  std::unordered_map<std::string, const InputTensor*> inputMap;
+  for (const auto &tensorInput : input) {
+    inputMap[std::string(tensorInput.name)] = &tensorInput;
   }
 
-  if (calculatedBatchSize > mMaxBatchSize) {
-    throw std::runtime_error("Input is greater than maximum batch size: " +
-                             std::to_string(calculatedBatchSize) + " > " +
-                             std::to_string(mMaxBatchSize));
+  // Track the batch size (should be consistent across all inputs)
+  int32_t batchSize = -1;
+  
+  // Process each input tensor
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+
+    if (tensorType != TensorIOMode::kINPUT) {
+      continue; // If not a tensor input skip
+    }
+    
+    // Find the corresponding input data
+    auto it = inputMap.find(tensorName);
+    if (it == inputMap.end()) {
+      throw std::runtime_error("Missing input tensor: " + std::string(tensorName));
+    }
+    
+    const auto &tensorInput = *it->second;
+    const auto &dims = mInputDims[i]; // Assuming mInputDims indexed by tensor order
+    
+    // Calculate expected tensor size (excluding batch dimension)
+    size_t tensorSize = 1;
+    for (int d = 1; d < dims.nbDims; ++d) {
+      tensorSize *= dims.d[d];
+    }
+    tensorSize *= mInputDataTypeSize;
+    
+    // Calculate batch size from input data
+    int32_t currentBatchSize = tensorInput.data.size() / tensorSize;
+    
+    if (batchSize == -1) {
+      batchSize = currentBatchSize;
+      
+      // Validate batch size constraints
+      if (batchSize < mMinBatchSize) {
+        throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
+                               " is less than minimum: " + std::to_string(mMinBatchSize));
+      }
+      if (batchSize > mMaxBatchSize) {
+        throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
+                               " is greater than maximum: " + std::to_string(mMaxBatchSize));
+      }
+    } else if (currentBatchSize != batchSize) {
+      throw std::runtime_error("Inconsistent batch sizes across input tensors");
+    }
+    
+    // Validate input tensor size
+    if (tensorInput.data.size() % tensorSize != 0) {
+      throw std::runtime_error("Input tensor '" + std::string(tensorName) + 
+                              "' does not contain whole number of batches");
+    }
+    
+    // Set input shape with batch dimension
+    nvinfer1::Dims inputDims = dims;
+    inputDims.d[0] = batchSize;
+    mContext->setInputShape(tensorName, inputDims);
+    
+    // Copy input data to GPU buffer
+    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
+                                      tensorInput.data.size(),
+                                      cudaMemcpyHostToDevice, mInferenceCudaStream));
   }
 
-  // Check that vector has enough elements for full input.
-  if (input.size() % (dims.d[0] * dims.d[1] * dims.d[2]) != 0) {
-    throw std::runtime_error(
-        "Input vector does not contain a whole number of batches");
-  }
-
-  // Define the batch size.
-  nvinfer1::Dims4 inputDims = {calculatedBatchSize, dims.d[0], dims.d[1],
-                               dims.d[2]};
-  mContext->setInputShape(mIOTensorNames[0].c_str(), inputDims);
-
-  checkCudaErrorCode(cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
-                                     cudaMemcpyHostToDevice,
-                                     mInferenceCudaStream));
-
-  // Ensure all dynamic bindings have been defined.
+  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
+  
+  // Ensure all dynamic bindings have been defined
   if (!mContext->allInputDimensionsSpecified()) {
     throw std::runtime_error("Error, not all required dimensions specified.");
   }
-
-  // Set the address of the input and output buffers
-  for (size_t i = 0; i < mBuffers.size(); ++i) {
-    bool status =
-        mContext->setTensorAddress(mIOTensorNames[i].c_str(), mBuffers[i]);
+  
+  // Set the address of all input and output buffers
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    bool status = mContext->setTensorAddress(tensorName, mBuffers[i]);
     if (!status) {
-      throw std::runtime_error("Unable to set tensor address in context");
+      throw std::runtime_error("Unable to set tensor address for: " + std::string(tensorName));
     }
   }
-
-  // Run inference.
+  
+  // Run inference
   bool status = mContext->enqueueV3(mInferenceCudaStream);
   if (!status) {
-    throw std::runtime_error("enqueue failed");
+    throw std::runtime_error("Inference execution failed");
   }
+  
+  // Collect output tensors
+  rust::Vec<OutputTensor> outputs;
+  
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
 
-  const auto outputLen = calculatedBatchSize * mOutputLengths[0];
-  rust::Vec<float> output;
-  resize(output, outputLen);
-  checkCudaErrorCode(cudaMemcpyAsync(
-      output.data(), static_cast<char *>(mBuffers[1]),
-      outputLen * sizeof(float), cudaMemcpyDeviceToHost, mInferenceCudaStream));
-
+    if (tensorType != TensorIOMode::kOUTPUT) {
+      continue; // skip if not tensor output
+    }
+    
+    // Find the output length for this tensor
+    size_t outputIdx = 0; // Need to map from tensor index to output index
+    for (int j = 0; j < i; ++j) {
+      if (mEngine->getTensorIOMode(mEngine->getIOTensorName(j)) == TensorIOMode::kOUTPUT) {
+        outputIdx++;
+      }
+    }
+    
+    const auto outputLen = batchSize * mOutputLengths[outputIdx];
+    
+    // Create output tensor
+    OutputTensor output;
+    output.name = std::string(tensorName);
+    resize(output.data, outputLen);
+    
+    // Copy data from GPU buffer
+    checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
+                                      static_cast<char*>(mBuffers[i]),
+                                      outputLen * sizeof(float), 
+                                      cudaMemcpyDeviceToHost, mInferenceCudaStream));
+    
+    outputs.push_back(std::move(output));
+  }
+  
   checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
+  
+  return outputs;
+}
 
-  return output;
+// Multi-tensor support methods
+rust::Vec<rust::String> Engine::get_input_names() const {
+  rust::Vec<rust::String> names;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kINPUT) {
+      names.push_back(rust::String(tensorName));
+    }
+  }
+  return names;
+}
+
+rust::Vec<rust::String> Engine::get_output_names() const {
+  rust::Vec<rust::String> names;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kOUTPUT) {
+      names.push_back(rust::String(tensorName));
+    }
+  }
+  return names;
+}
+
+size_t Engine::get_num_inputs() const {
+  size_t count = 0;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kINPUT) {
+      count++;
+    }
+  }
+  return count;
+}
+
+size_t Engine::get_num_outputs() const {
+  size_t count = 0;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kOUTPUT) {
+      count++;
+    }
+  }
+  return count;
+}
+
+rust::Vec<TensorInfo> Engine::get_input_dims() const {
+  rust::Vec<TensorInfo> result;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kINPUT) {
+      const auto dims = mEngine->getTensorShape(tensorName);
+      TensorInfo info;
+      info.name = std::string(tensorName);
+      resize(info.dims, 0);
+      // Skip batch dimension (index 0)
+      for (int j = 1; j < dims.nbDims; ++j) {
+        info.dims.push_back(static_cast<uint32_t>(dims.d[j]));
+      }
+      result.push_back(std::move(info));
+    }
+  }
+  return result;
+}
+
+rust::Vec<TensorInfo> Engine::get_output_dims() const {
+  rust::Vec<TensorInfo> result;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    if (tensorType == TensorIOMode::kOUTPUT) {
+      const auto dims = mEngine->getTensorShape(tensorName);
+      TensorInfo info;
+      info.name = std::string(tensorName);
+      resize(info.dims, 0);
+      // Skip batch dimension (index 0)
+      for (int j = 1; j < dims.nbDims; ++j) {
+        info.dims.push_back(static_cast<uint32_t>(dims.d[j]));
+      }
+      result.push_back(std::move(info));
+    }
+  }
+  return result;
 }

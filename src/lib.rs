@@ -8,7 +8,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use libinfer::{Engine, Options};
+//! use libinfer::{Engine, Options, InputTensor, TensorOutput, TensorInfo};
 //!
 //! // Create engine options
 //! let options = Options {
@@ -19,15 +19,27 @@
 //! // Load the engine
 //! let mut engine = Engine::new(&options).unwrap();
 //!
-//! // Get input dimensions and prepare input data
-//! let dims = engine.get_input_dims();
-//! let input_size = dims.iter().fold(1, |acc, &e| acc * e as usize);
-//! let input = vec![0u8; input_size];
+//! // Get input dimensions for all tensors
+//! let input_dims: Vec<TensorInfo> = engine.get_input_dims();
+//! 
+//! // Create input tensors
+//! let mut input_tensors: Vec<InputTensor> = Vec::new();
+//! for tensor_info in input_dims {
+//!     let size = tensor_info.dims.iter().fold(1, |acc, &d| acc * d as usize);
+//!     let input_tensor = InputTensor {
+//!         name: tensor_info.name,
+//!         tensor: vec![0u8; size],
+//!     };
+//!     input_tensors.push(input_tensor);
+//! }
 //!
 //! // Run inference
-//! let output = engine.pin_mut().infer(&input).unwrap();
+//! let outputs: Vec<TensorOutput> = engine.pin_mut().infer(&input_tensors).unwrap();
 //!
-//! // Process output...
+//! // Process outputs...
+//! for output in outputs {
+//!     println!("Output '{}': {} elements", output.name, output.data.len());
+//! }
 //! ```
 
 #[cxx::bridge]
@@ -40,6 +52,28 @@ pub mod ffi {
         UINT8,
         /// 32-bit floating point input type
         FP32,
+    }
+
+
+    #[derive(Debug, Clone)]
+    /// Tensor dimension information
+    struct TensorInfo {
+        name: String,
+        dims: Vec<u32>,
+    }
+
+    #[derive(Debug, Clone)]
+    /// Tensor input class
+    struct InputTensor {
+        name: String,
+        data: Vec<u8>,
+    }
+    
+    #[derive(Debug, Clone)]
+    /// Tensor output class
+    struct OutputTensor {
+        name: String,
+        data: Vec<f32>,
     }
 
     #[derive(Debug, Clone)]
@@ -68,23 +102,21 @@ pub mod ffi {
         /// A Result containing either the loaded engine or an error message.
         fn load_engine(options: &Options) -> Result<UniquePtr<Engine>>;
 
-        /// Return the input dimensions of the engine, not including the batch dimension.
+        /// Return the input dimensions of all input tensors, not including the batch dimension.
         ///
         /// # Returns
-        /// A vector of dimensions in the format [Channels, Height, Width] for image inputs,
-        /// or the appropriate dimensions for the model's input tensor.
-        fn get_input_dims(self: &Engine) -> Vec<u32>;
+        /// A vector of TensorInfo containing name and dimensions for each input tensor.
+        fn get_input_dims(self: &Engine) -> Vec<TensorInfo>;
 
         /// Return the minimum, optimized, and maximum batch dimension for this engine.
         /// This is an internal function used by `get_batch_dims`.
         fn _get_batch_dims(self: &Engine) -> Vec<u32>;
 
-        /// Return output dimensions of the engine, not including batch dimension.
+        /// Return output dimensions of all output tensors, not including batch dimension.
         ///
         /// # Returns
-        /// A vector representing the output tensor dimensions. The meaning of these
-        /// dimensions is dependent on the network definition.
-        fn get_output_dims(self: &Engine) -> Vec<u32>;
+        /// A vector of TensorInfo containing name and dimensions for each output tensor.
+        fn get_output_dims(self: &Engine) -> Vec<TensorInfo>;
 
         /// Return the expected length of the output feature vector.
         ///
@@ -98,6 +130,18 @@ pub mod ffi {
         /// # Returns
         /// The input data type (UINT8 or FP32) that this model expects.
         fn get_input_data_type(self: &Engine) -> InputDataType;
+
+        /// Get the names of all input tensors.
+        fn get_input_names(self: &Engine) -> Vec<String>;
+
+        /// Get the names of all output tensors.
+        fn get_output_names(self: &Engine) -> Vec<String>;
+
+        /// Get the number of input tensors.
+        fn get_num_inputs(self: &Engine) -> usize;
+
+        /// Get the number of output tensors.
+        fn get_num_outputs(self: &Engine) -> usize;
 
         /// Run inference on an input batch.
         ///
@@ -117,13 +161,19 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<u8>) -> Result<Vec<f32>>;
+        fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
     }
 }
 
-pub use crate::ffi::Engine;
-pub use crate::ffi::InputDataType;
-pub use crate::ffi::Options;
+// Primary exports
+pub use crate::ffi::{
+    Engine,
+    InputDataType,
+    Options,
+    TensorInfo,
+    InputTensor,
+    OutputTensor,
+};
 
 use cxx::{Exception, UniquePtr};
 

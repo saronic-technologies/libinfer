@@ -16,6 +16,7 @@
 
 use clap::Parser;
 use libinfer::{Engine, InputDataType, Options};
+use libinfer::ffi::InputTensor;
 use std::path::PathBuf;
 use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
@@ -63,27 +64,50 @@ fn main() {
 
     // Print model information
     info!("Engine loaded successfully");
-    info!("Input dimensions: {:?}", engine.get_input_dims());
-    info!("Output dimensions: {:?}", engine.get_output_dims());
+    info!("Number of inputs: {}", engine.get_num_inputs());
+    info!("Number of outputs: {}", engine.get_num_outputs());
     info!("Batch dimensions: {:?}", engine.get_batch_dims());
     info!("Input data type: {:?}", engine.get_input_data_type());
-
-    // Create input data based on input dimensions and data type
+    
+    // Print detailed information for all input tensors
     let input_dims = engine.get_input_dims();
-    let input_size = input_dims.iter().fold(1, |acc, &e| acc * e as usize);
+    info!("Input tensors:");
+    for input_info in &input_dims {
+        info!("  '{}': {:?}", input_info.name, input_info.dims);
+    }
+    
+    // Print detailed information for all output tensors
+    let output_dims = engine.get_output_dims();
+    info!("Output tensors:");
+    for output_info in &output_dims {
+        info!("  '{}': {:?}", output_info.name, output_info.dims);
+    }
 
-    // Create appropriate input based on data type
-    let input = match engine.get_input_data_type() {
-        InputDataType::UINT8 => vec![0u8; input_size],
-        InputDataType::FP32 => {
-            // For FP32, we need 4 bytes per element
-            vec![0u8; input_size * 4]
-        }
-        _ => {
-            error!("Unsupported input data type");
-            std::process::exit(1);
-        }
-    };
+    // Create input tensors for all inputs
+    let mut input_tensors = Vec::new();
+    
+    for input_info in &input_dims {
+        // Calculate tensor size from dimensions
+        let input_size = input_info.dims.iter().fold(1, |acc, &e| acc * e as usize);
+
+        // Create appropriate input data based on data type
+        let input_data = match engine.get_input_data_type() {
+            InputDataType::UINT8 => vec![0u8; input_size],
+            InputDataType::FP32 => {
+                // For FP32, we need 4 bytes per element
+                vec![0u8; input_size * 4]
+            }
+            _ => {
+                error!("Unsupported input data type");
+                std::process::exit(1);
+            }
+        };
+
+        input_tensors.push(InputTensor {
+            name: input_info.name.clone(),
+            data: input_data,
+        });
+    }
 
     info!("Running inference for {} iterations...", args.iterations);
 
@@ -93,11 +117,22 @@ fn main() {
             info!("Iteration {}/{}", i, args.iterations);
         }
 
-        let result = engine.pin_mut().infer(&input);
+        let result = engine.pin_mut().infer(&input_tensors);
 
-        if let Err(e) = &result {
-            error!("Inference error: {e}");
-            break;
+        match result {
+            Ok(outputs) => {
+                if i == 0 {
+                    // Print output information on first iteration
+                    info!("Inference successful! Output tensors:");
+                    for output in &outputs {
+                        info!("  '{}': {} elements", output.name, output.data.len());
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Inference error: {e}");
+                break;
+            }
         }
     }
 

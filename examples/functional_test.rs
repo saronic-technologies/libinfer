@@ -26,6 +26,7 @@ use approx::assert_relative_eq;
 use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, Options};
+use libinfer::ffi::InputTensor;
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
@@ -33,7 +34,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
 };
-use tracing::{info, warn, error, Level};
+use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -73,11 +74,13 @@ fn parse_file_to_float_vec(path: PathBuf) -> Result<Vec<f32>> {
 }
 
 fn test_input_dim(engine: &UniquePtr<Engine>) {
-    let input_dim = engine.get_input_dims();
-    assert_eq!(input_dim[0], 3);
-    assert_eq!(input_dim[1], 640);
-    assert_eq!(input_dim[2], 640);
-    info!("Input dimensions: {input_dim:?}");
+    let input_dims = engine.get_input_dims();
+    assert_eq!(input_dims.len(), 1); // Expecting one input tensor
+    let input_dim = &input_dims[0];
+    assert_eq!(input_dim.dims[0], 3);
+    assert_eq!(input_dim.dims[1], 640);
+    assert_eq!(input_dim.dims[2], 640);
+    info!("Input dimensions: '{}' -> {:?}", input_dim.name, input_dim.dims);
 }
 
 fn test_batch_dim(engine: &UniquePtr<Engine>) {
@@ -89,16 +92,21 @@ fn test_batch_dim(engine: &UniquePtr<Engine>) {
 }
 
 fn test_output_dim(engine: &UniquePtr<Engine>) {
-    let output_dim = engine.get_output_dims();
-    assert_eq!(output_dim[0], 84);
-    assert_eq!(output_dim[1], 8400);
-    info!("Output dimensions: {output_dim:?}");
+    let output_dims = engine.get_output_dims();
+    assert_eq!(output_dims.len(), 1); // Expecting one output tensor
+    let output_dim = &output_dims[0];
+    assert_eq!(output_dim.dims[0], 84);
+    assert_eq!(output_dim.dims[1], 8400);
+    info!("Output dimensions: '{}' -> {:?}", output_dim.name, output_dim.dims);
 }
 
 fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: &[f32]) {
     info!("Testing output features...");
     let batch_size = engine.get_batch_dims().opt;
-    let ext_input = {
+    let input_names = engine.get_input_names();
+    
+    // Create TensorInput for the first input tensor
+    let ext_input_data = {
         let mut v = input.to_vec();
         if batch_size > 1 {
             v.extend(
@@ -110,16 +118,25 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
         v
     };
 
-    let expected_output_size = engine
-        .get_output_dims()
+    let input_tensors = vec![InputTensor {
+        name: input_names[0].clone(),
+        data: ext_input_data,
+    }];
+
+    let output_dims = engine.get_output_dims();
+    let expected_output_size = output_dims[0]
+        .dims
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
-    let batch_element_size = engine
-        .get_output_dims()
+    let batch_element_size = output_dims[0]
+        .dims
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
 
-    let actual = engine.pin_mut().infer(&ext_input).unwrap();
+    let output_tensors = engine.pin_mut().infer(&input_tensors).unwrap();
+    
+    // Get the first output tensor
+    let actual = &output_tensors[0].data;
 
     // Check that the entire output length is correct.
     assert_eq!(actual.len(), expected_output_size);

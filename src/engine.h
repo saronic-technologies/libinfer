@@ -3,6 +3,7 @@
 #include "NvInfer.h"
 #include <chrono>
 #include <cstdlib>
+#include <vector>
 #include <cuda_runtime.h>
 #include <fstream>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -11,6 +12,9 @@
 #include "rust/cxx.h"
 
 struct Options;
+struct TensorInfo;
+struct InputTensor;
+struct OutputTensor;
 enum class InputDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
@@ -70,16 +74,11 @@ public:
   // Load and prepare the network for inference.
   void load();
 
-  // Run inference and return output tensor.
-  rust::Vec<float> infer(const rust::Vec<uint8_t> &input);
+  // Run inference and return output tensors.
+  rust::Vec<OutputTensor> infer(const rust::Vec<InputTensor> &input);
 
-  rust::Vec<uint32_t> get_input_dims() const {
-    rust::Vec<uint32_t> rv;
-    for (int i = 0; i < 3; ++i) {
-      rv.push_back(mInputDims[0].d[i]);
-    }
-    return rv;
-  };
+  // Get dimensions for all input tensors
+  rust::Vec<TensorInfo> get_input_dims() const;
 
   rust::Vec<uint32_t> _get_batch_dims() const {
     rust::Vec<uint32_t> rv;
@@ -89,23 +88,24 @@ public:
     return rv;
   }
 
-  rust::Vec<uint32_t> get_output_dims() const {
-    rust::Vec<uint32_t> rv;
-    for (int i = 1; i < 3; ++i) {
-      rv.push_back(mOutputDims[0].d[i]);
-    }
-    return rv;
-  };
+  // Get dimensions for all output tensors
+  rust::Vec<TensorInfo> get_output_dims() const;
 
-  uint32_t get_output_len() const { return mOutputLengths[0]; }
+  uint32_t get_output_len() const { return mOutputLengths.empty() ? 0 : mOutputLengths[0]; }
 
   InputDataType get_input_data_type() const { return mInputDataType; }
+
+  // New methods for multi-tensor support
+  rust::Vec<rust::String> get_input_names() const;
+  rust::Vec<rust::String> get_output_names() const;
+  size_t get_num_inputs() const;
+  size_t get_num_outputs() const;
 
 private:
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
   std::vector<uint32_t> mOutputLengths{};
-  std::vector<nvinfer1::Dims3> mInputDims;
+  std::vector<nvinfer1::Dims> mInputDims;
   std::vector<nvinfer1::Dims> mOutputDims;
   std::vector<std::string> mIOTensorNames;
   int32_t mMinBatchSize;
@@ -125,7 +125,7 @@ private:
 
   // Options values.
   const std::string kEnginePath;
-  const uint32_t kDeviceIndex;
+  const uint32_t kDeviceIndex; 
 };
 
 // Rust friends.

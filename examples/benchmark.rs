@@ -21,12 +21,13 @@
 use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, InputDataType, Options};
+use libinfer::ffi::InputTensor;
 use std::{
     iter::repeat,
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tracing::{info, warn, error, Level};
+use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -41,10 +42,16 @@ struct Args {
 }
 
 fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
-    let input_dim = engine.get_input_dims();
-    let batch_size = input_dim[0];
-    let input_len = input_dim.iter().fold(1, |acc, &e| acc * e) as usize;
+    let input_dims = engine.get_input_dims();
+    let batch_size = engine.get_batch_dims().opt; // Use optimal batch size from engine
+    let input_len = if !input_dims.is_empty() {
+        input_dims[0].dims.iter().fold(1, |acc, &e| acc * e as usize) * batch_size as usize
+    } else {
+        0
+    };
     let dtype = engine.get_input_data_type();
+    let input_names = engine.get_input_names();
+    
     let input_data: Vec<u8> = match dtype {
         InputDataType::UINT8 => repeat(0).take(input_len).collect(),
         InputDataType::FP32 => repeat(0).take(4 * input_len).collect(),
@@ -54,10 +61,18 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
         },
     };
 
+    // Create input tensors for all inputs
+    let input_tensors: Vec<InputTensor> = input_names.iter().map(|name| {
+        InputTensor {
+            name: name.clone(),
+            data: input_data.clone(),
+        }
+    }).collect();
+
     // Warmup.
     info!("Warming up inference codepath...");
     for _ in 0..1024 {
-        let _output = engine.pin_mut().infer(&input_data).unwrap();
+        let _output = engine.pin_mut().infer(&input_tensors).unwrap();
     }
 
     // Measure.
@@ -65,7 +80,7 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let latencies = (0..num_runs)
         .map(|_| {
             let start = Instant::now();
-            let _output = engine.pin_mut().infer(&input_data).unwrap();
+            let _output = engine.pin_mut().infer(&input_tensors).unwrap();
             start.elapsed()
         })
         .collect::<Vec<Duration>>();
