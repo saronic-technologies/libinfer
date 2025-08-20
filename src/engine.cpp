@@ -317,31 +317,33 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
-    
-    if (tensorType == TensorIOMode::kOUTPUT) {
-      // Find the output length for this tensor
-      size_t outputIdx = 0; // Need to map from tensor index to output index
-      for (int j = 0; j < i; ++j) {
-        if (mEngine->getTensorIOMode(mEngine->getIOTensorName(j)) == TensorIOMode::kOUTPUT) {
-          outputIdx++;
-        }
-      }
-      
-      const auto outputLen = batchSize * mOutputLengths[outputIdx];
-      
-      // Create output tensor
-      OutputTensor output;
-      output.name = std::string(tensorName);
-      resize(output.data, outputLen);
-      
-      // Copy data from GPU buffer
-      checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
-                                        static_cast<char*>(mBuffers[i]),
-                                        outputLen * sizeof(float), 
-                                        cudaMemcpyDeviceToHost, mInferenceCudaStream));
-      
-      outputs.push_back(std::move(output));
+
+    if (tensorType != TensorIOMode::kOUTPUT) {
+      continue; // skip if not tensor output
     }
+    
+    // Find the output length for this tensor
+    size_t outputIdx = 0; // Need to map from tensor index to output index
+    for (int j = 0; j < i; ++j) {
+      if (mEngine->getTensorIOMode(mEngine->getIOTensorName(j)) == TensorIOMode::kOUTPUT) {
+        outputIdx++;
+      }
+    }
+    
+    const auto outputLen = batchSize * mOutputLengths[outputIdx];
+    
+    // Create output tensor
+    OutputTensor output;
+    output.name = std::string(tensorName);
+    resize(output.data, outputLen);
+    
+    // Copy data from GPU buffer
+    checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
+                                      static_cast<char*>(mBuffers[i]),
+                                      outputLen * sizeof(float), 
+                                      cudaMemcpyDeviceToHost, mInferenceCudaStream));
+    
+    outputs.push_back(std::move(output));
   }
   
   checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
