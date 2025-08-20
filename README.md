@@ -15,7 +15,7 @@ To use this library, you'll need:
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-libinfer = "0.0.2"
+libinfer = "0.0.3"
 ```
 
 ## Usage
