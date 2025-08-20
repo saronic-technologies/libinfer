@@ -287,9 +287,9 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
                                       tensorInput.data.size(),
                                       cudaMemcpyHostToDevice, mInferenceCudaStream));
-
-    checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
   }
+
+  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
   
   // Ensure all dynamic bindings have been defined
   if (!mContext->allInputDimensionsSpecified()) {
