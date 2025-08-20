@@ -15,7 +15,7 @@ To use this library, you'll need:
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-libinfer = "0.0.1"
+libinfer = "0.0.2"
 ```
 
 ## Usage
@@ -33,7 +33,9 @@ let dims = engine.get_input_dims();
 
 // Construct a dummy input (uint8 or float32 depending on model)
 let input_size = dims.iter().fold(1, |acc, &e| acc * e as usize);
-let input = vec![0u8; input_size];
+let input = InputTensor {
+    name: "input".to_string();
+    data: vec![0u8; input_size];
 
 // Run inference
 let output = engine.pin_mut().infer(&input).unwrap();
@@ -80,7 +82,6 @@ See the documentation in each example file for specific requirements.
 
 ## Future Work
 - Allow passing device pointers and CUDA streams for stream synchronization events
-- Support for multiple inputs and outputs
 - Async execution support
 
 ## Credits
