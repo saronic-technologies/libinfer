@@ -16,7 +16,7 @@
 
 use clap::Parser;
 use libinfer::{Engine, InputDataType, Options};
-use libinfer::ffi::TensorInput;
+use libinfer::ffi::InputTensor;
 use std::path::PathBuf;
 use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
@@ -103,7 +103,7 @@ fn main() {
             }
         };
 
-        input_tensors.push(TensorInput {
+        input_tensors.push(InputTensor {
             name: input_info.name.clone(),
             tensor: input_data,
         });

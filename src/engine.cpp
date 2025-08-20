@@ -216,9 +216,9 @@ void Engine::load() {
   checkCudaErrorCode(cudaStreamDestroy(stream));
 }
 
-rust::Vec<TensorOutput> Engine::infer(const rust::Vec<TensorInput> &input) {
+rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
   // Create a map from tensor name to input data for easy lookup
-  std::unordered_map<std::string, const TensorInput*> inputMap;
+  std::unordered_map<std::string, const InputTensor*> inputMap;
   for (const auto &tensorInput : input) {
     inputMap[std::string(tensorInput.name)] = &tensorInput;
   }
@@ -249,7 +249,7 @@ rust::Vec<TensorOutput> Engine::infer(const rust::Vec<TensorInput> &input) {
       tensorSize *= mInputDataTypeSize;
       
       // Calculate batch size from input data
-      int32_t currentBatchSize = tensorInput.tensor.size() / tensorSize;
+      int32_t currentBatchSize = tensorInput.data.size() / tensorSize;
       
       if (batchSize == -1) {
         batchSize = currentBatchSize;
@@ -268,7 +268,7 @@ rust::Vec<TensorOutput> Engine::infer(const rust::Vec<TensorInput> &input) {
       }
       
       // Validate input tensor size
-      if (tensorInput.tensor.size() % tensorSize != 0) {
+      if (tensorInput.data.size() % tensorSize != 0) {
         throw std::runtime_error("Input tensor '" + std::string(tensorName) + 
                                 "' does not contain whole number of batches");
       }
@@ -279,8 +279,8 @@ rust::Vec<TensorOutput> Engine::infer(const rust::Vec<TensorInput> &input) {
       mContext->setInputShape(tensorName, inputDims);
       
       // Copy input data to GPU buffer
-      checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.tensor.data(), 
-                                        tensorInput.tensor.size(),
+      checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
+                                        tensorInput.data.size(),
                                         cudaMemcpyHostToDevice, mInferenceCudaStream));
     }
   }
@@ -306,7 +306,7 @@ rust::Vec<TensorOutput> Engine::infer(const rust::Vec<TensorInput> &input) {
   }
   
   // Collect output tensors
-  rust::Vec<TensorOutput> outputs;
+  rust::Vec<OutputTensor> outputs;
   
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
@@ -324,7 +324,7 @@ rust::Vec<TensorOutput> Engine::infer(const rust::Vec<TensorInput> &input) {
       const auto outputLen = batchSize * mOutputLengths[outputIdx];
       
       // Create output tensor
-      TensorOutput output;
+      OutputTensor output;
       output.name = std::string(tensorName);
       resize(output.data, outputLen);
       

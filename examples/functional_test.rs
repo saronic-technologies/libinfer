@@ -26,7 +26,7 @@ use approx::assert_relative_eq;
 use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, Options};
-use libinfer::ffi::TensorInput;
+use libinfer::ffi::InputTensor;
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},

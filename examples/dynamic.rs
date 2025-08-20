@@ -22,7 +22,7 @@
 
 use clap::Parser;
 use libinfer::{Engine, InputDataType, Options};
-use libinfer::ffi::TensorInput;
+use libinfer::ffi::InputTensor;
 use std::{path::PathBuf, time::Instant};
 use tracing::{info, warn, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};

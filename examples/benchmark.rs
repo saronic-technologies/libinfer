@@ -21,7 +21,7 @@
 use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, InputDataType, Options};
-use libinfer::ffi::TensorInput;
+use libinfer::ffi::InputTensor;
 use std::{
     iter::repeat,
     path::PathBuf,
@@ -62,8 +62,8 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     };
 
     // Create input tensors for all inputs
-    let input_tensors: Vec<TensorInput> = input_names.iter().map(|name| {
-        TensorInput {
+    let input_tensors: Vec<InputTensor> = input_names.iter().map(|name| {
+        InputTensor {
             name: name.clone(),
             tensor: input_data.clone(),
         }

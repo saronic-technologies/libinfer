@@ -8,7 +8,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use libinfer::{Engine, Options, TensorInput, TensorOutput, TensorInfo};
+//! use libinfer::{Engine, Options, InputTensor, TensorOutput, TensorInfo};
 //!
 //! // Create engine options
 //! let options = Options {
@@ -23,10 +23,10 @@
 //! let input_dims: Vec<TensorInfo> = engine.get_input_dims();
 //! 
 //! // Create input tensors
-//! let mut input_tensors: Vec<TensorInput> = Vec::new();
+//! let mut input_tensors: Vec<InputTensor> = Vec::new();
 //! for tensor_info in input_dims {
 //!     let size = tensor_info.dims.iter().fold(1, |acc, &d| acc * d as usize);
-//!     let input_tensor = TensorInput {
+//!     let input_tensor = InputTensor {
 //!         name: tensor_info.name,
 //!         tensor: vec![0u8; size],
 //!     };
@@ -64,14 +64,14 @@ pub mod ffi {
 
     #[derive(Debug, Clone)]
     /// Tensor input class
-    struct TensorInput {
+    struct InputTensor {
         name: String,
-        tensor: Vec<u8>,
+        data: Vec<u8>,
     }
     
     #[derive(Debug, Clone)]
     /// Tensor output class
-    struct TensorOutput {
+    struct OutputTensor {
         name: String,
         data: Vec<f32>,
     }
@@ -161,7 +161,7 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<TensorInput>) -> Result<Vec<TensorOutput>>;
+        fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
     }
 }
 
@@ -171,8 +171,8 @@ pub use crate::ffi::{
     InputDataType,
     Options,
     TensorInfo,
-    TensorInput,
-    TensorOutput,
+    InputTensor,
+    OutputTensor,
 };
 
 use cxx::{Exception, UniquePtr};

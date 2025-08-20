@@ -13,8 +13,8 @@
 
 struct Options;
 struct TensorInfo;
-struct TensorInput;
-struct TensorOutput;
+struct InputTensor;
+struct OutputTensor;
 enum class InputDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
@@ -75,7 +75,7 @@ public:
   void load();
 
   // Run inference and return output tensors.
-  rust::Vec<TensorOutput> infer(const rust::Vec<TensorInput> &input);
+  rust::Vec<OutputTensor> infer(const rust::Vec<InputTensor> &input);
 
   // Get dimensions for all input tensors
   rust::Vec<TensorInfo> get_input_dims() const;
