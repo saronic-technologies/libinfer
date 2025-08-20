@@ -1,5 +1,6 @@
 #include "engine.h"
 
+#include <NvInferRuntimeBase.h>
 #include <NvOnnxParser.h>
 #include <algorithm>
 #include <filesystem>
@@ -7,6 +8,7 @@
 #include <iostream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
 #include <unordered_map>
 
 #include "libinfer/src/lib.rs.h"
@@ -230,59 +232,63 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
-    
-    if (tensorType == TensorIOMode::kINPUT) {
-      // Find the corresponding input data
-      auto it = inputMap.find(tensorName);
-      if (it == inputMap.end()) {
-        throw std::runtime_error("Missing input tensor: " + std::string(tensorName));
-      }
-      
-      const auto &tensorInput = *it->second;
-      const auto &dims = mInputDims[i]; // Assuming mInputDims indexed by tensor order
-      
-      // Calculate expected tensor size (excluding batch dimension)
-      size_t tensorSize = 1;
-      for (int d = 1; d < dims.nbDims; ++d) {
-        tensorSize *= dims.d[d];
-      }
-      tensorSize *= mInputDataTypeSize;
-      
-      // Calculate batch size from input data
-      int32_t currentBatchSize = tensorInput.data.size() / tensorSize;
-      
-      if (batchSize == -1) {
-        batchSize = currentBatchSize;
-        
-        // Validate batch size constraints
-        if (batchSize < mMinBatchSize) {
-          throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
-                                 " is less than minimum: " + std::to_string(mMinBatchSize));
-        }
-        if (batchSize > mMaxBatchSize) {
-          throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
-                                 " is greater than maximum: " + std::to_string(mMaxBatchSize));
-        }
-      } else if (currentBatchSize != batchSize) {
-        throw std::runtime_error("Inconsistent batch sizes across input tensors");
-      }
-      
-      // Validate input tensor size
-      if (tensorInput.data.size() % tensorSize != 0) {
-        throw std::runtime_error("Input tensor '" + std::string(tensorName) + 
-                                "' does not contain whole number of batches");
-      }
-      
-      // Set input shape with batch dimension
-      nvinfer1::Dims inputDims = dims;
-      inputDims.d[0] = batchSize;
-      mContext->setInputShape(tensorName, inputDims);
-      
-      // Copy input data to GPU buffer
-      checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
-                                        tensorInput.data.size(),
-                                        cudaMemcpyHostToDevice, mInferenceCudaStream));
+
+    if (tensorType != TensorIOMode::kINPUT) {
+      continue; // If not a tensor input skip
     }
+    
+    // Find the corresponding input data
+    auto it = inputMap.find(tensorName);
+    if (it == inputMap.end()) {
+      throw std::runtime_error("Missing input tensor: " + std::string(tensorName));
+    }
+    
+    const auto &tensorInput = *it->second;
+    const auto &dims = mInputDims[i]; // Assuming mInputDims indexed by tensor order
+    
+    // Calculate expected tensor size (excluding batch dimension)
+    size_t tensorSize = 1;
+    for (int d = 1; d < dims.nbDims; ++d) {
+      tensorSize *= dims.d[d];
+    }
+    tensorSize *= mInputDataTypeSize;
+    
+    // Calculate batch size from input data
+    int32_t currentBatchSize = tensorInput.data.size() / tensorSize;
+    
+    if (batchSize == -1) {
+      batchSize = currentBatchSize;
+      
+      // Validate batch size constraints
+      if (batchSize < mMinBatchSize) {
+        throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
+                               " is less than minimum: " + std::to_string(mMinBatchSize));
+      }
+      if (batchSize > mMaxBatchSize) {
+        throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
+                               " is greater than maximum: " + std::to_string(mMaxBatchSize));
+      }
+    } else if (currentBatchSize != batchSize) {
+      throw std::runtime_error("Inconsistent batch sizes across input tensors");
+    }
+    
+    // Validate input tensor size
+    if (tensorInput.data.size() % tensorSize != 0) {
+      throw std::runtime_error("Input tensor '" + std::string(tensorName) + 
+                              "' does not contain whole number of batches");
+    }
+    
+    // Set input shape with batch dimension
+    nvinfer1::Dims inputDims = dims;
+    inputDims.d[0] = batchSize;
+    mContext->setInputShape(tensorName, inputDims);
+    
+    // Copy input data to GPU buffer
+    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
+                                      tensorInput.data.size(),
+                                      cudaMemcpyHostToDevice, mInferenceCudaStream));
+
+    checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
   }
   
   // Ensure all dynamic bindings have been defined
