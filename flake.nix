@@ -66,6 +66,11 @@
             LD_LIBRARY_PATH = libs;
             CPLUS_INCLUDE_PATH = "${pkgs.gcc}/include/c++/${pkgs.gcc.version}:${pkgs.gcc}/include/c++/${pkgs.gcc.version}/x86_64-unknown-linux-gnu:${pkgs.glibc.dev}/include";
             C_INCLUDE_PATH = "${pkgs.glibc.dev}/include";
+            shellHook = ''
+              export CC="clang"
+              export CXX="clang++"
+            '';
+            
           };
         };
       });

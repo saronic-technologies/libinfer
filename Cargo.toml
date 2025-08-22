@@ -31,6 +31,10 @@ approx = "0.5.1"
 clap = { version = "4.5.27", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+ort = "=2.0.0-rc.10"
+base64ct = "=1.7.3"
+rand = "0.8.5"
+ndarray = "0.15"
 
 [package.metadata.docs.rs]
 features = ["doc-only"]
@@ -51,4 +55,8 @@ path = "examples/dynamic.rs"
 [[example]]
 name = "functional_test"
 path = "examples/functional_test.rs"
+
+[[example]]
+name = "onnx_tensorrt_compare"
+path = "examples/onnx_tensorrt_compare.rs"
 
