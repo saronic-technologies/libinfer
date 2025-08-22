@@ -77,7 +77,7 @@ fn generate_random_input_f32(dims: &[u32], rng: &mut StdRng) -> Vec<f32> {
 fn f32_to_u8(data: &[f32]) -> Vec<u8> {
     // Convert f32 values to their byte representation (4 bytes per f32)
     data.iter()
-        .flat_map(|&f| f.to_le_bytes())
+        .flat_map(|&f| f.to_ne_bytes())
         .collect()
 }
 
@@ -183,7 +183,32 @@ fn run_tensorrt_inference(
     Ok(outputs.into_iter().map(|o| o.data).collect())
 }
 
-fn compare_outputs(onnx_output: &[f32], tensorrt_output: &[f32], tolerance: f32) -> Result<()> {
+fn flat_index_to_multi_dim(flat_index: usize, shape: &[u32]) -> Vec<usize> {
+    let mut indices = Vec::with_capacity(shape.len());
+    let mut remaining = flat_index;
+    
+    // Convert shape to usize for calculations
+    let shape_usize: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+    
+    // Calculate strides for each dimension
+    let mut strides = Vec::with_capacity(shape.len());
+    let mut stride = 1;
+    for &dim in shape_usize.iter().rev() {
+        strides.push(stride);
+        stride *= dim;
+    }
+    strides.reverse();
+    
+    // Calculate indices for each dimension
+    for &stride in &strides {
+        indices.push(remaining / stride);
+        remaining %= stride;
+    }
+    
+    indices
+}
+
+fn compare_outputs(onnx_output: &[f32], tensorrt_output: &[f32], tolerance: f32, output_shape: &[u32]) -> Result<()> {
     if onnx_output.len() != tensorrt_output.len() {
         return Err(anyhow!(
             "Output lengths differ: ONNX={}, TensorRT={}",
@@ -208,9 +233,10 @@ fn compare_outputs(onnx_output: &[f32], tensorrt_output: &[f32], tolerance: f32)
 
         if relative_error > tolerance {
             num_mismatches += 1;
+            let multi_dim_indices = flat_index_to_multi_dim(i, output_shape);
             debug!(
-                "Mismatch at index {}: ONNX={:.6}, TensorRT={:.6}, diff={:.6}, rel_err={:.6}",
-                i, onnx_val, trt_val, diff, relative_error
+                "Mismatch at index {} {:?}: ONNX={:.6}, TensorRT={:.6}, diff={:.6}, rel_err={:.6}",
+                i, multi_dim_indices, onnx_val, trt_val, diff, relative_error
             );
         }
     }
@@ -403,8 +429,13 @@ fn main() -> Result<()> {
         }
         
         for (i, (onnx_output, tensorrt_output)) in onnx_outputs.iter().zip(tensorrt_outputs.iter()).enumerate() {
-            compare_outputs(onnx_output, tensorrt_output, args.tolerance)
-                .map_err(|e| anyhow!("Output {} comparison failed: {}", i, e));
+            // Get output shape (with batch dimension)
+            let output_shape_with_batch: Vec<u32> = std::iter::once(1u32) // batch = 1
+                .chain(output_dims[i].dims.iter().cloned())
+                .collect();
+            
+            compare_outputs(onnx_output, tensorrt_output, args.tolerance, &output_shape_with_batch)
+                .map_err(|e| anyhow!("Output {} comparison failed: {}", i, e))?;
         }
     }
 
