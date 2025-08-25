@@ -32,8 +32,9 @@ use ort::{
 };
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use std::collections::HashSet;
 use std::path::PathBuf;
-use tracing::{info, debug, Level};
+use tracing::{info, debug, Level, warn};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -76,8 +77,9 @@ fn generate_random_input_f32(dims: &[u32], rng: &mut StdRng) -> Vec<f32> {
 
 fn f32_to_u8(data: &[f32]) -> Vec<u8> {
     // Convert f32 values to their byte representation (4 bytes per f32)
+    // Use little-endian to match the from_le_bytes() conversion later
     data.iter()
-        .flat_map(|&f| f.to_ne_bytes())
+        .flat_map(|&f| f.to_le_bytes())
         .collect()
 }
 
@@ -260,7 +262,7 @@ fn main() -> Result<()> {
     // Initialize tracing subscriber for logging
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(EnvFilter::from_default_env())
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set tracing subscriber");
@@ -321,25 +323,51 @@ fn main() -> Result<()> {
         ));
     }
 
+    // Validate input names match (order-independent check)
+    let onnx_input_names: std::collections::HashSet<String> = session.inputs.iter().map(|i| i.name.clone()).collect();
+    let trt_input_names: std::collections::HashSet<String> = input_dims.iter().map(|i| i.name.clone()).collect();
+    
+    if onnx_input_names != trt_input_names {
+        warn!("Input name mismatch detected:");
+        warn!("ONNX inputs: {:?}", onnx_input_names);
+        warn!("TensorRT inputs: {:?}", trt_input_names);
+        warn!("This may cause incorrect tensor mapping");
+    }
+
+    // Validate output names match (order-independent check)  
+    let onnx_output_names: std::collections::HashSet<String> = session.outputs.iter().map(|o| o.name.clone()).collect();
+    let trt_output_names: std::collections::HashSet<String> = output_dims.iter().map(|o| o.name.clone()).collect();
+    
+    if onnx_output_names != trt_output_names {
+        warn!("Output name mismatch detected:");
+        warn!("ONNX outputs: {:?}", onnx_output_names);
+        warn!("TensorRT outputs: {:?}", trt_output_names);
+        warn!("This may cause incorrect comparison");
+    }
+
     info!("Model validation passed:");
     info!("- {} input tensors", input_dims.len());
     info!("- {} output tensors", output_dims.len());
     info!("- Input data type: {:?}", input_data_type);
 
-    for input_info in input_dims.iter() {
-        info!("TensorRT input: '{}' with dimensions {:?}", input_info.name, input_info.dims);
+    info!("Detailed tensor information:");
+    
+    for (i, input_info) in input_dims.iter().enumerate() {
+        let tensor_size: usize = input_info.dims.iter().map(|&d| d as usize).product();
+        info!("TensorRT input {}: '{}' dims={:?} size={}", i, input_info.name, input_info.dims, tensor_size);
     }
     
-    for output_info in output_dims.iter() {
-        info!("TensorRT output: '{}' with dimensions {:?}", output_info.name, output_info.dims);
+    for (i, output_info) in output_dims.iter().enumerate() {
+        let tensor_size: usize = output_info.dims.iter().map(|&d| d as usize).product();
+        info!("TensorRT output {}: '{}' dims={:?} size={}", i, output_info.name, output_info.dims, tensor_size);
     }
 
-    for onnx_input in session.inputs.iter() {
-        info!("ONNX input: '{}'", onnx_input.name);
+    for (i, onnx_input) in session.inputs.iter().enumerate() {
+        info!("ONNX input {}: '{}'", i, onnx_input.name);
     }
     
-    for onnx_output in session.outputs.iter() {
-        info!("ONNX output: '{}'", onnx_output.name);
+    for (i, onnx_output) in session.outputs.iter().enumerate() {
+        info!("ONNX output {}: '{}'", i, onnx_output.name);
     }
 
     // Run comparison tests
@@ -400,12 +428,27 @@ fn main() -> Result<()> {
             InputDataType::FP32 => {
                 // Convert u8 bytes back to f32 for ONNX, TensorRT takes u8 bytes
                 let mut input_data_list_f32 = Vec::new();
-                for u8_data in &input_data_list_u8 {
+                for (tensor_idx, u8_data) in input_data_list_u8.iter().enumerate() {
+                    if u8_data.len() % 4 != 0 {
+                        return Err(anyhow!(
+                            "Invalid u8 data length for tensor {}: {} bytes (not divisible by 4)",
+                            tensor_idx, u8_data.len()
+                        ));
+                    }
+                    
                     // Convert bytes back to f32 values
                     let f32_data: Vec<f32> = u8_data
                         .chunks_exact(4)
                         .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
                         .collect();
+                    
+                    // Sanity check: verify no NaN or infinite values
+                    let invalid_count = f32_data.iter().filter(|&&f| !f.is_finite()).count();
+                    if invalid_count > 0 {
+                        warn!("Tensor {} has {} non-finite values after byte conversion", tensor_idx, invalid_count);
+                    }
+                    
+                    info!("Tensor {}: Converted {} bytes to {} f32 values", tensor_idx, u8_data.len(), f32_data.len());
                     input_data_list_f32.push(f32_data);
                 }
                 
