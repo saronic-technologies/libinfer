@@ -114,6 +114,11 @@ fn main() {
                 // For FP32, we need 4 bytes per element
                 vec![0u8; total_elements * 4]
             }
+            InputDataType::INT64 => {
+                // For INT64, we need 8 bytes per element
+                vec![0u8; total_elements * 8]
+            }
+            InputDataType::BOOL => vec![0u8; total_elements],
             _ => {
                 error!("Unsupported input data type");
                 std::process::exit(1);

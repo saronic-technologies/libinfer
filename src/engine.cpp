@@ -167,6 +167,14 @@ void Engine::load() {
         mInputDataType = InputDataType::UINT8;
         mInputDataTypeSize = 1;
         break;
+      case DataType::kINT64:
+        mInputDataType = InputDataType::INT64;
+        mInputDataTypeSize = 8;
+        break;
+      case DataType::kBOOL:
+        mInputDataType = InputDataType::BOOL;
+        mInputDataTypeSize = 1;
+        break;
       default:
         mInputDataType = InputDataType::FP32;
         mInputDataTypeSize = 4;

@@ -55,6 +55,8 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let input_data: Vec<u8> = match dtype {
         InputDataType::UINT8 => repeat(0).take(input_len).collect(),
         InputDataType::FP32 => repeat(0).take(4 * input_len).collect(),
+        InputDataType::INT64 => repeat(0).take(8 * input_len).collect(),
+        InputDataType::BOOL => repeat(0).take(input_len).collect(),
         _ => {
             error!("Unsupported input data type");
             std::process::exit(1);

@@ -52,6 +52,10 @@ pub mod ffi {
         UINT8,
         /// 32-bit floating point input type
         FP32,
+        /// 64-bit integer input type
+        INT64,
+        /// 8-bit boolean input type
+        BOOL,
     }
 
 
@@ -73,7 +77,7 @@ pub mod ffi {
     /// Tensor output class
     struct OutputTensor {
         name: String,
-        data: Vec<f32>,
+        data: Vec<u8>,
     }
 
     #[derive(Debug, Clone)]

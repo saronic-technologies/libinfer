@@ -175,6 +175,37 @@ fn run_onnx_inference_u8(session: &mut Session, input_data_list: &[Vec<u8>], inp
     Ok(result_outputs)
 }
 
+fn run_onnx_inference_int64(session: &mut Session, input_data_list: &[Vec<int64>], input_infos: &[libinfer::TensorInfo]) -> Result<Vec<Vec<f32>>> {
+    // Get output names before mutable borrow
+    let output_names: Vec<String> = session.outputs.iter().map(|o| o.name.clone()).collect();
+    
+    // Create input tensors for all inputs (i64 data type)
+    let mut input_tensors = Vec::new();
+    for (i, input_data) in input_data_list.iter().enumerate() {
+        let input_info = &input_infos[i];
+        // Create tensor with the shape provided from TensorRT (add batch dimension)
+        let shape_with_batch: Vec<usize> = std::iter::once(1usize) // batch size 1
+            .chain(input_info.dims.iter().map(|&d| d as usize))
+            .collect();
+        
+        let input_tensor = Value::from_array((shape_with_batch, input_data.clone()))?;
+        input_tensors.push((input_info.name.as_str(), input_tensor));
+    }
+    
+    // Run inference with all inputs
+    let inputs_map = input_tensors.into_iter().collect::<std::collections::HashMap<_, _>>();
+    let outputs = session.run(inputs_map)?;
+    
+    // Extract all outputs
+    let mut result_outputs = Vec::new();
+    for output_name in output_names {
+        let output_tensor = outputs[output_name.as_str()].try_extract_array::<f32>()?;
+        result_outputs.push(output_tensor.to_owned().into_raw_vec_and_offset().0);
+    }
+    
+    Ok(result_outputs)
+}
+
 fn run_tensorrt_inference(
     engine: &mut UniquePtr<Engine>,
     input_data_list: &[Vec<u8>],
