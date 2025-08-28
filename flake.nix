@@ -53,6 +53,8 @@
           glibc
           zlib
           tensorrt.lib
+          cudnn
+          cuda_cudart
         ]);
       in
       {

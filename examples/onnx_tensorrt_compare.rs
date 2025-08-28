@@ -468,14 +468,14 @@ fn main() -> Result<()> {
         },
         ExecutionProvider::CUDA => {
             Session::builder()?
-                .with_execution_providers([CUDAExecutionProvider::default().build()])?
+                .with_execution_providers([CUDAExecutionProvider::default().build().error_on_failure()])?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_intra_threads(4)?
                 .commit_from_file(&args.onnx)?
         },
         ExecutionProvider::TensorRT => {
             Session::builder()?
-                .with_execution_providers([TensorRTExecutionProvider::default().build()])?
+                .with_execution_providers([TensorRTExecutionProvider::default().build().error_on_failure()])?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_intra_threads(4)?
                 .commit_from_file(&args.onnx)?
