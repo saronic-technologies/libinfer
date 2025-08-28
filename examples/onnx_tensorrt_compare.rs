@@ -26,6 +26,7 @@ use clap::Parser;
 use cxx::UniquePtr;
 use libinfer::{Engine, InputDataType, Options};
 use libinfer::ffi::InputTensor;
+use ort::execution_providers::{CUDAExecutionProvider, TensorRTExecutionProvider};
 use ort::{
     session::{builder::GraphOptimizationLevel, Session},
     value::Value,
@@ -37,12 +38,33 @@ use std::time::{Duration, Instant};
 use tracing::{info, debug, Level, warn};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
 
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum ExecutionProvider {
+    CPU,
+    CUDA,
+    TensorRT,
+}
+
+impl std::fmt::Display for ExecutionProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecutionProvider::CPU => write!(f, "CPU"),
+            ExecutionProvider::CUDA => write!(f, "CUDA"),
+            ExecutionProvider::TensorRT => write!(f, "TensorRT"),
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[clap(about = "Compare ONNX Runtime vs TensorRT inference results")]
 struct Args {
     /// Path to the ONNX model file
     #[arg(long, value_name = "PATH", value_parser)]
     onnx: PathBuf,
+
+    /// ONNX execution provider
+    #[arg(long, default_value_t = ExecutionProvider::TensorRT, value_enum)]
+    onnx_ep: ExecutionProvider,
 
     /// Path to the TensorRT engine file
     #[arg(long, value_name = "PATH", value_parser)]
@@ -438,11 +460,27 @@ fn main() -> Result<()> {
 
     info!("Loading ONNX model: {}", args.onnx.display());
     
-    // Create session using ort 2.0 API
-    let mut session = Session::builder()?
-        .with_optimization_level(GraphOptimizationLevel::Level3)?
-        .with_intra_threads(4)?
-        .commit_from_file(&args.onnx)?;
+    let mut session = match args.onnx_ep {
+        ExecutionProvider::CPU => {
+            Session::builder()?
+                .with_intra_threads(4)?
+                .commit_from_file(&args.onnx)?
+        },
+        ExecutionProvider::CUDA => {
+            Session::builder()?
+                .with_execution_providers([CUDAExecutionProvider::default().build()])?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_intra_threads(4)?
+                .commit_from_file(&args.onnx)?
+        },
+        ExecutionProvider::TensorRT => {
+            Session::builder()?
+                .with_execution_providers([TensorRTExecutionProvider::default().build()])?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_intra_threads(4)?
+                .commit_from_file(&args.onnx)?
+        }
+    };
 
     info!("ONNX model loaded successfully");
 
