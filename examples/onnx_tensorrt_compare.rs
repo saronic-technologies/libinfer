@@ -200,7 +200,7 @@ fn run_onnx_inference_u8(session: &mut Session, input_data_list: &[Vec<u8>], inp
     Ok(result_outputs)
 }
 
-fn run_onnx_inference_int64(session: &mut Session, input_data_list: &[Vec<int64>], input_infos: &[libinfer::TensorInfo]) -> Result<Vec<Vec<f32>>> {
+fn run_onnx_inference_int64(session: &mut Session, input_data_list: &[Vec<i64>], input_infos: &[libinfer::TensorInfo]) -> Result<Vec<Vec<f32>>> {
     // Get output names before mutable borrow
     let output_names: Vec<String> = session.outputs.iter().map(|o| o.name.clone()).collect();
     
@@ -293,8 +293,49 @@ fn run_tensorrt_inference(
         return Err(anyhow!("No outputs from TensorRT engine"));
     }
 
-    // Return all outputs
-    Ok(outputs.into_iter().map(|o| o.data).collect())
+    // Convert Vec<u8> outputs to Vec<f32> based on data type
+    let mut converted_outputs = Vec::new();
+    for output in outputs {
+        let f32_data = match output.dtype {
+            TensorDataType::FP32 => {
+                // Convert Vec<u8> to Vec<f32>
+                if output.data.len() % 4 != 0 {
+                    return Err(anyhow!("Invalid f32 data length: {} bytes", output.data.len()));
+                }
+                output.data
+                    .chunks_exact(4)
+                    .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                    .collect()
+            }
+            TensorDataType::UINT8 => {
+                // Convert u8 to f32
+                output.data.iter().map(|&b| b as f32).collect()
+            }
+            TensorDataType::INT64 => {
+                // Convert Vec<u8> to Vec<i64> then to Vec<f32>
+                if output.data.len() % 8 != 0 {
+                    return Err(anyhow!("Invalid i64 data length: {} bytes", output.data.len()));
+                }
+                output.data
+                    .chunks_exact(8)
+                    .map(|bytes| i64::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3],
+                        bytes[4], bytes[5], bytes[6], bytes[7]
+                    ]) as f32)
+                    .collect()
+            }
+            TensorDataType::BOOL => {
+                // Convert bool (u8) to f32
+                output.data.iter().map(|&b| if b != 0 { 1.0 } else { 0.0 }).collect()
+            }
+            _ => {
+                return Err(anyhow!("Unsupported output tensor data type: {:?}", output.dtype));
+            }
+        };
+        converted_outputs.push(f32_data);
+    }
+
+    Ok(converted_outputs)
 }
 
 fn flat_index_to_multi_dim(flat_index: usize, shape: &[u32]) -> Vec<usize> {
@@ -429,6 +470,9 @@ fn benchmark_inference(
                 // that's handled in the main benchmark loop
                 warn!("Skipping warmup for {:?} data type", input_data_type);
             }
+            _ => {
+                return Err(anyhow!("Unsupported input data type for benchmarking"));
+            }
         }
     }
 
@@ -454,6 +498,7 @@ fn benchmark_inference(
                 TensorDataType::INT64 | TensorDataType::BOOL => {
                     Err(anyhow!("Benchmarking for {:?} data type requires additional data preparation - not yet implemented", input_data_type))
                 }
+                _ => Err(anyhow!("Unsupported input data type for benchmarking")),
             };
             let iteration_time = start.elapsed();
             recent_latencies.push(iteration_time);
@@ -699,6 +744,9 @@ fn main() -> Result<()> {
                 let data_bool = generate_random_input_bool(&dims_with_batch, &mut rng);
                 bool_to_u8(&data_bool)
             }
+            _ => {
+                return Err(anyhow!("Unsupported input data type for random generation"));
+            }
         };
         input_data_list_u8.push(data_u8);
     }
@@ -763,6 +811,9 @@ fn main() -> Result<()> {
         }
         TensorDataType::UINT8 => {
             // No additional preparation needed for UINT8
+        }
+        _ => {
+            return Err(anyhow!("Unsupported input data type for ONNX preparation"));
         }
     }
 
@@ -837,6 +888,9 @@ fn main() -> Result<()> {
                 } else {
                     return Err(anyhow!("Missing bool input data for BOOL model"));
                 }
+            }
+            _ => {
+                return Err(anyhow!("Unsupported input data type for inference"));
             }
         };
 

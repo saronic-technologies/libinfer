@@ -98,12 +98,22 @@ public:
   size_t get_num_outputs() const;
 
 private:
+  // Tensor metadata stored at construction time
+  struct TensorMetadata {
+    std::string name;
+    nvinfer1::TensorIOMode ioMode;
+    nvinfer1::DataType dataType;
+    size_t dataTypeSize;
+    nvinfer1::Dims dims;
+  };
+
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
   std::vector<uint32_t> mOutputLengths{};
   std::vector<nvinfer1::Dims> mInputDims;
   std::vector<nvinfer1::Dims> mOutputDims;
   std::vector<std::string> mIOTensorNames;
+  std::vector<TensorMetadata> mTensorMetadata; // Cached tensor metadata
   int32_t mMinBatchSize;
   int32_t mOptBatchSize;
   int32_t mMaxBatchSize;
