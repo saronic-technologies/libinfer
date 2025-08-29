@@ -64,6 +64,7 @@ pub mod ffi {
     struct TensorInfo {
         name: String,
         dims: Vec<u32>,
+        dtype: TensorDataType,
     }
 
     #[derive(Debug, Clone)]
@@ -71,6 +72,7 @@ pub mod ffi {
     struct InputTensor {
         name: String,
         data: Vec<u8>,
+        dtype: TensorDataType,
     }
     
     #[derive(Debug, Clone)]
@@ -78,6 +80,7 @@ pub mod ffi {
     struct OutputTensor {
         name: String,
         data: Vec<u8>,
+        dtype: TensorDataType,
     }
 
     #[derive(Debug, Clone)]
@@ -128,18 +131,6 @@ pub mod ffi {
         /// The total number of elements in the output tensor, equivalent to
         /// multiplying all elements of `get_output_dims`.
         fn get_output_len(self: &Engine) -> u32;
-
-        /// Returns the input data type expected by this engine.
-        ///
-        /// # Returns
-        /// The input data type (UINT8 or FP32) that this model expects.
-        fn get_input_data_type(self: &Engine) -> TensorDataType;
-
-        /// Get the names of all input tensors.
-        fn get_input_names(self: &Engine) -> Vec<String>;
-
-        /// Get the names of all output tensors.
-        fn get_output_names(self: &Engine) -> Vec<String>;
 
         /// Get the number of input tensors.
         fn get_num_inputs(self: &Engine) -> usize;

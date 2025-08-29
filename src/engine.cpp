@@ -19,6 +19,36 @@
 
 using namespace nvinfer1;
 
+// Helper function to convert from our enum to TensorRT's enum.
+TensorDataType toTensorDataType(DataType dt) {
+  switch (dt) {
+  case DataType::kFLOAT:
+    return TensorDataType::FP32;
+  case DataType::kUINT8:
+    return TensorDataType::UINT8;
+  case DataType::kINT64:
+    return TensorDataType::INT64;
+  case DataType::kBOOL:
+    return TensorDataType::BOOL;
+  default:
+    throw std::runtime_error("Unsupported tensor data type");
+  }
+}
+
+// Helper function to get the size in bytes of a data type.
+size_t getDataTypeSize(TensorDataType dt) {
+  switch (dt) {
+  case TensorDataType::FP32:
+    return 4;
+  case TensorDataType::UINT8:
+    return 1;
+  case TensorDataType::INT64:
+    return 8;
+  case TensorDataType::BOOL:
+    return 1;
+  }
+}
+
 // Implement our Rust friends.
 std::unique_ptr<Engine> load_engine(const Options &options) {
   auto engine = std::make_unique<Engine>(options);
@@ -158,28 +188,7 @@ void Engine::load() {
     if (tensorType == TensorIOMode::kINPUT) {
       // Store the input dims for later use.
       mInputDims.push_back(tensorShape);
-      switch (tensorDataType) {
-      case DataType::kFLOAT:
-        mTensorDataType = TensorDataType::FP32;
-        mTensorDataTypeSize = 4;
-        break;
-      case DataType::kUINT8:
-        mTensorDataType = TensorDataType::UINT8;
-        mTensorDataTypeSize = 1;
-        break;
-      case DataType::kINT64:
-        mTensorDataType = TensorDataType::INT64;
-        mTensorDataTypeSize = 8;
-        break;
-      case DataType::kBOOL:
-        mTensorDataType = TensorDataType::BOOL;
-        mTensorDataTypeSize = 1;
-        break;
-      default:
-        mTensorDataType = TensorDataType::FP32;
-        mTensorDataTypeSize = 4;
-        break;
-      }
+      const size_t inputDataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
 
       mMinBatchSize =
           mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN)
@@ -195,7 +204,7 @@ void Engine::load() {
       checkCudaErrorCode(
           cudaMallocAsync(&mBuffers[i],
                           mMaxBatchSize * tensorShape.d[1] * tensorShape.d[2] *
-                              tensorShape.d[3] * mTensorDataTypeSize,
+                              tensorShape.d[3] * inputDataTypeSize,
                           stream));
 
     } else if (tensorType == TensorIOMode::kOUTPUT) {
@@ -240,6 +249,8 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    const auto tensorDataType = mEngine->getTensorDataType(tensorName);
+    const auto tensorDataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
 
     if (tensorType != TensorIOMode::kINPUT) {
       continue; // If not a tensor input skip
@@ -259,7 +270,7 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     for (int d = 1; d < dims.nbDims; ++d) {
       tensorSize *= dims.d[d];
     }
-    tensorSize *= mTensorDataTypeSize;
+    tensorSize *= tensorDataTypeSize; // Account for data type size
     
     // Calculate batch size from input data
     int32_t currentBatchSize = tensorInput.data.size() / tensorSize;
@@ -359,31 +370,6 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
   return outputs;
 }
 
-// Multi-tensor support methods
-rust::Vec<rust::String> Engine::get_input_names() const {
-  rust::Vec<rust::String> names;
-  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
-    const auto tensorName = mEngine->getIOTensorName(i);
-    const auto tensorType = mEngine->getTensorIOMode(tensorName);
-    if (tensorType == TensorIOMode::kINPUT) {
-      names.push_back(rust::String(tensorName));
-    }
-  }
-  return names;
-}
-
-rust::Vec<rust::String> Engine::get_output_names() const {
-  rust::Vec<rust::String> names;
-  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
-    const auto tensorName = mEngine->getIOTensorName(i);
-    const auto tensorType = mEngine->getTensorIOMode(tensorName);
-    if (tensorType == TensorIOMode::kOUTPUT) {
-      names.push_back(rust::String(tensorName));
-    }
-  }
-  return names;
-}
-
 size_t Engine::get_num_inputs() const {
   size_t count = 0;
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
@@ -413,6 +399,7 @@ rust::Vec<TensorInfo> Engine::get_input_dims() const {
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    const auto tensorDataType = mEngine->getTensorDataType(tensorName);
     if (tensorType == TensorIOMode::kINPUT) {
       const auto dims = mEngine->getTensorShape(tensorName);
       TensorInfo info;
@@ -422,6 +409,9 @@ rust::Vec<TensorInfo> Engine::get_input_dims() const {
       for (int j = 1; j < dims.nbDims; ++j) {
         info.dims.push_back(static_cast<uint32_t>(dims.d[j]));
       }
+
+      info.dtype = toTensorDataType(tensorDataType); 
+
       result.push_back(std::move(info));
     }
   }
@@ -433,6 +423,7 @@ rust::Vec<TensorInfo> Engine::get_output_dims() const {
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    const auto tensorDataType = mEngine->getTensorDataType(tensorName);
     if (tensorType == TensorIOMode::kOUTPUT) {
       const auto dims = mEngine->getTensorShape(tensorName);
       TensorInfo info;
@@ -442,6 +433,9 @@ rust::Vec<TensorInfo> Engine::get_output_dims() const {
       for (int j = 1; j < dims.nbDims; ++j) {
         info.dims.push_back(static_cast<uint32_t>(dims.d[j]));
       }
+
+      info.dtype = toTensorDataType(tensorDataType); 
+
       result.push_back(std::move(info));
     }
   }

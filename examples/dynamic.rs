@@ -69,13 +69,10 @@ fn main() {
     info!("Engine loaded successfully");
     info!("Number of inputs: {}", engine.get_num_inputs());
     info!("Number of outputs: {}", engine.get_num_outputs());
-    info!("Input names: {:?}", engine.get_input_names());
-    info!("Output names: {:?}", engine.get_output_names());
     info!("Input dimensions: {:?}", engine.get_input_dims());
     info!("Output dimensions: {:?}", engine.get_output_dims());
     info!("Batch dimensions: min={}, optimal={}, max={}",
          batch_dims.min, batch_dims.opt, batch_dims.max);
-    info!("Input data type: {:?}", engine.get_input_data_type());
 
     // Check if this engine truly supports dynamic batch sizes
     if batch_dims.min == batch_dims.max {

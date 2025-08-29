@@ -82,7 +82,6 @@ public:
 
   rust::Vec<uint32_t> _get_batch_dims() const {
     rust::Vec<uint32_t> rv;
-    rv.push_back(mMinBatchSize);
     rv.push_back(mOptBatchSize);
     rv.push_back(mMaxBatchSize);
     return rv;
@@ -93,11 +92,7 @@ public:
 
   uint32_t get_output_len() const { return mOutputLengths.empty() ? 0 : mOutputLengths[0]; }
 
-  TensorDataType get_input_data_type() const { return mTensorDataType; }
-
   // New methods for multi-tensor support
-  rust::Vec<rust::String> get_input_names() const;
-  rust::Vec<rust::String> get_output_names() const;
   size_t get_num_inputs() const;
   size_t get_num_outputs() const;
 
@@ -111,8 +106,6 @@ private:
   int32_t mMinBatchSize;
   int32_t mOptBatchSize;
   int32_t mMaxBatchSize;
-  TensorDataType mTensorDataType;
-  uint8_t mTensorDataTypeSize;
 
   // Must keep IRuntime around for inference, see:
   // https://forums.developer.nvidia.com/t/is-it-safe-to-deallocate-nvinfer1-iruntime-after-creating-an-nvinfer1-icudaengine-but-before-running-inference-with-said-icudaengine/255381/2?u=cyruspk4w6
