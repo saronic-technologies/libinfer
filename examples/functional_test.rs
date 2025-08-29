@@ -118,9 +118,11 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
         v
     };
 
+    let input_dims = engine.get_input_dims();
     let input_tensors = vec![InputTensor {
         name: input_names[0].clone(),
         data: ext_input_data,
+        dtype: input_dims[0].dtype.clone(),
     }];
 
     let output_dims = engine.get_output_dims();
@@ -191,7 +193,10 @@ fn main() {
         std::process::exit(1);
     });
 
-    info!("Input data type: {:?}", engine.get_input_data_type());
+    let input_dims = engine.get_input_dims();
+    if !input_dims.is_empty() {
+        info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
+    }
 
     test_input_dim(&engine);
     test_output_dim(&engine);

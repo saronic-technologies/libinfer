@@ -105,11 +105,36 @@ fn generate_random_input_f32(dims: &[u32], rng: &mut StdRng) -> Vec<f32> {
     (0..size).map(|_| rng.gen_range(-1.0..=1.0)).collect()
 }
 
+fn generate_random_input_int64(dims: &[u32], rng: &mut StdRng) -> Vec<i64> {
+    let size: usize = dims.iter().map(|&d| d as usize).product();
+    (0..size).map(|_| rng.gen_range(-1000..=1000)).collect()
+}
+
+fn generate_random_input_bool(dims: &[u32], rng: &mut StdRng) -> Vec<bool> {
+    let size: usize = dims.iter().map(|&d| d as usize).product();
+    (0..size).map(|_| rng.gen_bool(0.5)).collect()
+}
+
 fn f32_to_u8(data: &[f32]) -> Vec<u8> {
     // Convert f32 values to their byte representation (4 bytes per f32)
     // Use little-endian to match the from_le_bytes() conversion later
     data.iter()
         .flat_map(|&f| f.to_le_bytes())
+        .collect()
+}
+
+fn int64_to_u8(data: &[i64]) -> Vec<u8> {
+    // Convert i64 values to their byte representation (8 bytes per i64)
+    // Use little-endian to match the from_le_bytes() conversion later
+    data.iter()
+        .flat_map(|&i| i.to_le_bytes())
+        .collect()
+}
+
+fn bool_to_u8(data: &[bool]) -> Vec<u8> {
+    // Convert bool values to byte representation (1 byte per bool)
+    data.iter()
+        .map(|&b| if b { 1u8 } else { 0u8 })
         .collect()
 }
 
@@ -206,6 +231,37 @@ fn run_onnx_inference_int64(session: &mut Session, input_data_list: &[Vec<int64>
     Ok(result_outputs)
 }
 
+fn run_onnx_inference_bool(session: &mut Session, input_data_list: &[Vec<bool>], input_infos: &[libinfer::TensorInfo]) -> Result<Vec<Vec<f32>>> {
+    // Get output names before mutable borrow
+    let output_names: Vec<String> = session.outputs.iter().map(|o| o.name.clone()).collect();
+    
+    // Create input tensors for all inputs (bool data type)
+    let mut input_tensors = Vec::new();
+    for (i, input_data) in input_data_list.iter().enumerate() {
+        let input_info = &input_infos[i];
+        // Create tensor with the shape provided from TensorRT (add batch dimension)
+        let shape_with_batch: Vec<usize> = std::iter::once(1usize) // batch size 1
+            .chain(input_info.dims.iter().map(|&d| d as usize))
+            .collect();
+        
+        let input_tensor = Value::from_array((shape_with_batch, input_data.clone()))?;
+        input_tensors.push((input_info.name.as_str(), input_tensor));
+    }
+    
+    // Run inference with all inputs
+    let inputs_map = input_tensors.into_iter().collect::<std::collections::HashMap<_, _>>();
+    let outputs = session.run(inputs_map)?;
+    
+    // Extract all outputs
+    let mut result_outputs = Vec::new();
+    for output_name in output_names {
+        let output_tensor = outputs[output_name.as_str()].try_extract_array::<f32>()?;
+        result_outputs.push(output_tensor.to_owned().into_raw_vec_and_offset().0);
+    }
+    
+    Ok(result_outputs)
+}
+
 fn run_tensorrt_inference(
     engine: &mut UniquePtr<Engine>,
     input_data_list: &[Vec<u8>],
@@ -226,6 +282,7 @@ fn run_tensorrt_inference(
         input_tensors.push(InputTensor {
             name: input_info.name.clone(),
             data: input_data.clone(),
+            dtype: input_info.dtype.clone(),
         });
     }
 
@@ -367,7 +424,11 @@ fn benchmark_inference(
                     let _ = run_tensorrt_inference(engine, input_data_list_u8, input_dims)?;
                 }
             }
-            _ => return Err(anyhow!("Unsupported input data type for benchmarking")),
+            TensorDataType::INT64 | TensorDataType::BOOL => {
+                // For INT64 and BOOL, we skip warmup as they require additional data preparation
+                // that's handled in the main benchmark loop
+                warn!("Skipping warmup for {:?} data type", input_data_type);
+            }
         }
     }
 
@@ -390,7 +451,9 @@ fn benchmark_inference(
                         Err(anyhow!("Missing f32 input data"))
                     }
                 }
-                _ => Err(anyhow!("Unsupported data type")),
+                TensorDataType::INT64 | TensorDataType::BOOL => {
+                    Err(anyhow!("Benchmarking for {:?} data type requires additional data preparation - not yet implemented", input_data_type))
+                }
             };
             let iteration_time = start.elapsed();
             recent_latencies.push(iteration_time);
@@ -530,11 +593,18 @@ fn main() -> Result<()> {
     // Get model information
     let input_dims = engine.get_input_dims();
     let output_dims = engine.get_output_dims();
-    let input_data_type = engine.get_input_data_type();
     
-    if input_dims.is_empty() {
+    // Check if all input tensors have the same data type (for backward compatibility)
+    let input_data_type = if input_dims.is_empty() {
         return Err(anyhow!("No input tensors found in TensorRT engine"));
-    }
+    } else if input_dims.iter().all(|tensor| tensor.dtype == input_dims[0].dtype) {
+        input_dims[0].dtype.clone()
+    } else {
+        return Err(anyhow!(
+            "Mixed input data types are not yet supported in comparison mode. Found types: {:?}",
+            input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>()
+        ));
+    };
     
     if output_dims.is_empty() {
         return Err(anyhow!("No output tensors found in TensorRT engine"));
@@ -621,32 +691,79 @@ fn main() -> Result<()> {
                 let data_f32 = generate_random_input_f32(&dims_with_batch, &mut rng);
                 f32_to_u8(&data_f32)
             }
-            _ => {
-                return Err(anyhow!("Unsupported input data type: {:?}", input_data_type));
+            TensorDataType::INT64 => {
+                let data_int64 = generate_random_input_int64(&dims_with_batch, &mut rng);
+                int64_to_u8(&data_int64)
+            }
+            TensorDataType::BOOL => {
+                let data_bool = generate_random_input_bool(&dims_with_batch, &mut rng);
+                bool_to_u8(&data_bool)
             }
         };
         input_data_list_u8.push(data_u8);
     }
 
-    // For FP32 models, also prepare f32 data for ONNX
-    if input_data_type == TensorDataType::FP32 {
-        let mut f32_inputs = Vec::new();
-        for (tensor_idx, u8_data) in input_data_list_u8.iter().enumerate() {
-            if u8_data.len() % 4 != 0 {
-                return Err(anyhow!(
-                    "Invalid u8 data length for tensor {}: {} bytes (not divisible by 4)",
-                    tensor_idx, u8_data.len()
-                ));
+    // Prepare specific data types for ONNX inference
+    let mut input_data_list_int64: Option<Vec<Vec<i64>>> = None;
+    let mut input_data_list_bool: Option<Vec<Vec<bool>>> = None;
+    
+    match input_data_type {
+        TensorDataType::FP32 => {
+            let mut f32_inputs = Vec::new();
+            for (tensor_idx, u8_data) in input_data_list_u8.iter().enumerate() {
+                if u8_data.len() % 4 != 0 {
+                    return Err(anyhow!(
+                        "Invalid u8 data length for tensor {}: {} bytes (not divisible by 4)",
+                        tensor_idx, u8_data.len()
+                    ));
+                }
+                
+                let f32_data: Vec<f32> = u8_data
+                    .chunks_exact(4)
+                    .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                    .collect();
+                
+                f32_inputs.push(f32_data);
             }
-            
-            let f32_data: Vec<f32> = u8_data
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                .collect();
-            
-            f32_inputs.push(f32_data);
+            input_data_list_f32 = Some(f32_inputs);
         }
-        input_data_list_f32 = Some(f32_inputs);
+        TensorDataType::INT64 => {
+            let mut int64_inputs = Vec::new();
+            for (tensor_idx, u8_data) in input_data_list_u8.iter().enumerate() {
+                if u8_data.len() % 8 != 0 {
+                    return Err(anyhow!(
+                        "Invalid u8 data length for tensor {}: {} bytes (not divisible by 8)",
+                        tensor_idx, u8_data.len()
+                    ));
+                }
+                
+                let int64_data: Vec<i64> = u8_data
+                    .chunks_exact(8)
+                    .map(|bytes| i64::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3],
+                        bytes[4], bytes[5], bytes[6], bytes[7]
+                    ]))
+                    .collect();
+                
+                int64_inputs.push(int64_data);
+            }
+            input_data_list_int64 = Some(int64_inputs);
+        }
+        TensorDataType::BOOL => {
+            let mut bool_inputs = Vec::new();
+            for u8_data in input_data_list_u8.iter() {
+                let bool_data: Vec<bool> = u8_data
+                    .iter()
+                    .map(|&byte| byte != 0)
+                    .collect();
+                
+                bool_inputs.push(bool_data);
+            }
+            input_data_list_bool = Some(bool_inputs);
+        }
+        TensorDataType::UINT8 => {
+            // No additional preparation needed for UINT8
+        }
     }
 
     // Run performance benchmarking if not skipped
@@ -699,8 +816,27 @@ fn main() -> Result<()> {
                     return Err(anyhow!("Missing f32 input data for FP32 model"));
                 }
             }
-            _ => {
-                return Err(anyhow!("Unsupported input data type: {:?}", input_data_type));
+            TensorDataType::INT64 => {
+                if let Some(ref input_int64) = input_data_list_int64 {
+                    let onnx_outputs = run_onnx_inference_int64(&mut session, input_int64, &input_dims)
+                        .map_err(|e| anyhow!("ONNX inference failed: {}", e))?;
+                    let tensorrt_outputs = run_tensorrt_inference(&mut engine, &input_data_list_u8, &input_dims)
+                        .map_err(|e| anyhow!("TensorRT inference failed: {}", e))?;
+                    (onnx_outputs, tensorrt_outputs)
+                } else {
+                    return Err(anyhow!("Missing int64 input data for INT64 model"));
+                }
+            }
+            TensorDataType::BOOL => {
+                if let Some(ref input_bool) = input_data_list_bool {
+                    let onnx_outputs = run_onnx_inference_bool(&mut session, input_bool, &input_dims)
+                        .map_err(|e| anyhow!("ONNX inference failed: {}", e))?;
+                    let tensorrt_outputs = run_tensorrt_inference(&mut engine, &input_data_list_u8, &input_dims)
+                        .map_err(|e| anyhow!("TensorRT inference failed: {}", e))?;
+                    (onnx_outputs, tensorrt_outputs)
+                } else {
+                    return Err(anyhow!("Missing bool input data for BOOL model"));
+                }
             }
         };
 

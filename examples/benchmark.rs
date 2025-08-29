@@ -44,31 +44,33 @@ struct Args {
 fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let input_dims = engine.get_input_dims();
     let batch_size = engine.get_batch_dims().opt; // Use optimal batch size from engine
-    let input_len = if !input_dims.is_empty() {
-        input_dims[0].dims.iter().fold(1, |acc, &e| acc * e as usize) * batch_size as usize
-    } else {
-        0
-    };
-    let dtype = engine.get_input_data_type();
-    let input_names = engine.get_input_names();
     
-    let input_data: Vec<u8> = match dtype {
-        TensorDataType::UINT8 => repeat(0).take(input_len).collect(),
-        TensorDataType::FP32 => repeat(0).take(4 * input_len).collect(),
-        TensorDataType::INT64 => repeat(0).take(8 * input_len).collect(),
-        TensorDataType::BOOL => repeat(0).take(input_len).collect(),
-        _ => {
-            error!("Unsupported input data type");
-            std::process::exit(1);
-        },
-    };
+    // Create input tensors for all inputs with per-tensor data types
+    let input_tensors: Vec<InputTensor> = input_dims.iter().map(|input_info| {
+        info!("Input tensor '{}' has dims {:?} and dtype {:?}", input_info.name, input_info.dims, input_info.dtype);
 
-    // Create input tensors for all inputs
-    let input_tensors: Vec<InputTensor> = input_names.iter().map(|name| {
-        InputTensor {
-            name: name.clone(),
-            data: input_data.clone(),
-        }
+        let input_len = input_info.dims.iter().fold(1, |acc, &e| acc * e as usize) * batch_size as usize;
+        
+        let input_data: Vec<u8> = match input_info.dtype {
+            TensorDataType::UINT8 => repeat(0).take(input_len).collect(),
+            TensorDataType::FP32 => repeat(0).take(4 * input_len).collect(),
+            TensorDataType::INT64 => repeat(0).take(8 * input_len).collect(),
+            TensorDataType::BOOL => repeat(0).take(input_len).collect(),
+            _ => {
+                error!("Unsupported input data type");
+                std::process::exit(1);
+            },
+        };
+
+        let input = InputTensor {
+            name: input_info.name.clone(),
+            data: input_data,
+            dtype: input_info.dtype.clone(),
+        };
+        
+        info!("Created input tensor '{}' with {} elements (dtype: {:?})", input.name, input.data.len(), input.dtype);
+
+        input
     }).collect();
 
     // Warmup.
@@ -127,7 +129,10 @@ fn main() {
             }
         };
 
-        info!("Input data type: {:?}", engine.get_input_data_type());
+        let input_dims = engine.get_input_dims();
+        if !input_dims.is_empty() {
+            info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
+        }
         benchmark_inference(&mut engine, args.iterations);
         return;
     }
@@ -152,7 +157,10 @@ fn main() {
         }
     };
 
-    info!("Input data type: {:?}", b1_engine.get_input_data_type());
+    let input_dims = b1_engine.get_input_dims();
+    if !input_dims.is_empty() {
+        info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
+    }
     info!("\nRunning benchmark for batch size 1");
     benchmark_inference(&mut b1_engine, args.iterations);
 
