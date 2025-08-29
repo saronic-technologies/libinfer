@@ -15,7 +15,7 @@ struct Options;
 struct TensorInfo;
 struct InputTensor;
 struct OutputTensor;
-enum class InputDataType : uint8_t;
+enum class TensorDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
 public:
@@ -93,7 +93,7 @@ public:
 
   uint32_t get_output_len() const { return mOutputLengths.empty() ? 0 : mOutputLengths[0]; }
 
-  InputDataType get_input_data_type() const { return mInputDataType; }
+  TensorDataType get_input_data_type() const { return mTensorDataType; }
 
   // New methods for multi-tensor support
   rust::Vec<rust::String> get_input_names() const;
@@ -111,8 +111,8 @@ private:
   int32_t mMinBatchSize;
   int32_t mOptBatchSize;
   int32_t mMaxBatchSize;
-  InputDataType mInputDataType;
-  uint8_t mInputDataTypeSize;
+  TensorDataType mTensorDataType;
+  uint8_t mTensorDataTypeSize;
 
   // Must keep IRuntime around for inference, see:
   // https://forums.developer.nvidia.com/t/is-it-safe-to-deallocate-nvinfer1-iruntime-after-creating-an-nvinfer1-icudaengine-but-before-running-inference-with-said-icudaengine/255381/2?u=cyruspk4w6

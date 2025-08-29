@@ -15,7 +15,7 @@
 //! - To create engine files, use the TensorRT Python API or trtexec command-line tool
 
 use clap::Parser;
-use libinfer::{Engine, InputDataType, Options};
+use libinfer::{Engine, TensorDataType, Options};
 use libinfer::ffi::InputTensor;
 use std::path::PathBuf;
 use tracing::{info, error, Level};
@@ -92,8 +92,8 @@ fn main() {
 
         // Create appropriate input data based on data type
         let input_data = match engine.get_input_data_type() {
-            InputDataType::UINT8 => vec![0u8; input_size],
-            InputDataType::FP32 => {
+            TensorDataType::UINT8 => vec![0u8; input_size],
+            TensorDataType::FP32 => {
                 // For FP32, we need 4 bytes per element
                 vec![0u8; input_size * 4]
             }

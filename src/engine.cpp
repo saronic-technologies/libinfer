@@ -160,24 +160,24 @@ void Engine::load() {
       mInputDims.push_back(tensorShape);
       switch (tensorDataType) {
       case DataType::kFLOAT:
-        mInputDataType = InputDataType::FP32;
-        mInputDataTypeSize = 4;
+        mTensorDataType = TensorDataType::FP32;
+        mTensorDataTypeSize = 4;
         break;
       case DataType::kUINT8:
-        mInputDataType = InputDataType::UINT8;
-        mInputDataTypeSize = 1;
+        mTensorDataType = TensorDataType::UINT8;
+        mTensorDataTypeSize = 1;
         break;
       case DataType::kINT64:
-        mInputDataType = InputDataType::INT64;
-        mInputDataTypeSize = 8;
+        mTensorDataType = TensorDataType::INT64;
+        mTensorDataTypeSize = 8;
         break;
       case DataType::kBOOL:
-        mInputDataType = InputDataType::BOOL;
-        mInputDataTypeSize = 1;
+        mTensorDataType = TensorDataType::BOOL;
+        mTensorDataTypeSize = 1;
         break;
       default:
-        mInputDataType = InputDataType::FP32;
-        mInputDataTypeSize = 4;
+        mTensorDataType = TensorDataType::FP32;
+        mTensorDataTypeSize = 4;
         break;
       }
 
@@ -195,7 +195,7 @@ void Engine::load() {
       checkCudaErrorCode(
           cudaMallocAsync(&mBuffers[i],
                           mMaxBatchSize * tensorShape.d[1] * tensorShape.d[2] *
-                              tensorShape.d[3] * mInputDataTypeSize,
+                              tensorShape.d[3] * mTensorDataTypeSize,
                           stream));
 
     } else if (tensorType == TensorIOMode::kOUTPUT) {
@@ -259,7 +259,7 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     for (int d = 1; d < dims.nbDims; ++d) {
       tensorSize *= dims.d[d];
     }
-    tensorSize *= mInputDataTypeSize;
+    tensorSize *= mTensorDataTypeSize;
     
     // Calculate batch size from input data
     int32_t currentBatchSize = tensorInput.data.size() / tensorSize;

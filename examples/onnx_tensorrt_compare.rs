@@ -24,7 +24,7 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use cxx::UniquePtr;
-use libinfer::{Engine, InputDataType, Options};
+use libinfer::{Engine, TensorDataType, Options};
 use libinfer::ffi::InputTensor;
 use ort::execution_providers::{CUDAExecutionProvider, TensorRTExecutionProvider};
 use ort::{
@@ -346,7 +346,7 @@ fn benchmark_inference(
     input_data_list_u8: &[Vec<u8>],
     input_data_list_f32: &Option<Vec<Vec<f32>>>,
     input_dims: &[libinfer::TensorInfo],
-    input_data_type: InputDataType,
+    input_data_type: TensorDataType,
     num_runs: usize,
 ) -> Result<BenchmarkResults> {
     info!("Warming up inference paths (10 iterations)...");
@@ -357,11 +357,11 @@ fn benchmark_inference(
             info!("  Warmup progress: {}/10", i + 1);
         }
         match input_data_type {
-            InputDataType::UINT8 => {
+            TensorDataType::UINT8 => {
                 let _ = run_onnx_inference_u8(session, input_data_list_u8, input_dims)?;
                 let _ = run_tensorrt_inference(engine, input_data_list_u8, input_dims)?;
             }
-            InputDataType::FP32 => {
+            TensorDataType::FP32 => {
                 if let Some(ref input_f32) = input_data_list_f32 {
                     let _ = run_onnx_inference_f32(session, input_f32, input_dims)?;
                     let _ = run_tensorrt_inference(engine, input_data_list_u8, input_dims)?;
@@ -382,8 +382,8 @@ fn benchmark_inference(
         .map(|i| {
             let start = Instant::now();
             let _ = match input_data_type {
-                InputDataType::UINT8 => run_onnx_inference_u8(session, input_data_list_u8, input_dims),
-                InputDataType::FP32 => {
+                TensorDataType::UINT8 => run_onnx_inference_u8(session, input_data_list_u8, input_dims),
+                TensorDataType::FP32 => {
                     if let Some(ref input_f32) = input_data_list_f32 {
                         run_onnx_inference_f32(session, input_f32, input_dims)
                     } else {
@@ -614,10 +614,10 @@ fn main() -> Result<()> {
             .collect();
         
         let data_u8 = match input_data_type {
-            InputDataType::UINT8 => {
+            TensorDataType::UINT8 => {
                 generate_random_input_u8(&dims_with_batch, &mut rng)
             }
-            InputDataType::FP32 => {
+            TensorDataType::FP32 => {
                 let data_f32 = generate_random_input_f32(&dims_with_batch, &mut rng);
                 f32_to_u8(&data_f32)
             }
@@ -629,7 +629,7 @@ fn main() -> Result<()> {
     }
 
     // For FP32 models, also prepare f32 data for ONNX
-    if input_data_type == InputDataType::FP32 {
+    if input_data_type == TensorDataType::FP32 {
         let mut f32_inputs = Vec::new();
         for (tensor_idx, u8_data) in input_data_list_u8.iter().enumerate() {
             if u8_data.len() % 4 != 0 {
@@ -681,14 +681,14 @@ fn main() -> Result<()> {
 
         // Run ONNX and TensorRT inference based on data type
         let (onnx_outputs, tensorrt_outputs) = match input_data_type {
-            InputDataType::UINT8 => {
+            TensorDataType::UINT8 => {
                 let onnx_outputs = run_onnx_inference_u8(&mut session, &input_data_list_u8, &input_dims)
                     .map_err(|e| anyhow!("ONNX inference failed: {}", e))?;
                 let tensorrt_outputs = run_tensorrt_inference(&mut engine, &input_data_list_u8, &input_dims)
                     .map_err(|e| anyhow!("TensorRT inference failed: {}", e))?;
                 (onnx_outputs, tensorrt_outputs)
             }
-            InputDataType::FP32 => {
+            TensorDataType::FP32 => {
                 if let Some(ref input_f32) = input_data_list_f32 {
                     let onnx_outputs = run_onnx_inference_f32(&mut session, input_f32, &input_dims)
                         .map_err(|e| anyhow!("ONNX inference failed: {}", e))?;

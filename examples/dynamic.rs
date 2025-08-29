@@ -21,7 +21,7 @@
 //!   ```
 
 use clap::Parser;
-use libinfer::{Engine, InputDataType, Options};
+use libinfer::{Engine, TensorDataType, Options};
 use libinfer::ffi::InputTensor;
 use std::{path::PathBuf, time::Instant};
 use tracing::{info, warn, error, Level};
@@ -109,16 +109,16 @@ fn main() {
 
         // Create appropriate input based on data type
         let input_data = match engine.get_input_data_type() {
-            InputDataType::UINT8 => vec![0u8; total_elements],
-            InputDataType::FP32 => {
+            TensorDataType::UINT8 => vec![0u8; total_elements],
+            TensorDataType::FP32 => {
                 // For FP32, we need 4 bytes per element
                 vec![0u8; total_elements * 4]
             }
-            InputDataType::INT64 => {
+            TensorDataType::INT64 => {
                 // For INT64, we need 8 bytes per element
                 vec![0u8; total_elements * 8]
             }
-            InputDataType::BOOL => vec![0u8; total_elements],
+            TensorDataType::BOOL => vec![0u8; total_elements],
             _ => {
                 error!("Unsupported input data type");
                 std::process::exit(1);

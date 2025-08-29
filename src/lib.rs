@@ -47,7 +47,7 @@ pub mod ffi {
 
     #[derive(Debug, Clone)]
     /// What input data type this network accepts.
-    enum InputDataType {
+    enum TensorDataType {
         /// 8-bit unsigned integer input type
         UINT8,
         /// 32-bit floating point input type
@@ -133,7 +133,7 @@ pub mod ffi {
         ///
         /// # Returns
         /// The input data type (UINT8 or FP32) that this model expects.
-        fn get_input_data_type(self: &Engine) -> InputDataType;
+        fn get_input_data_type(self: &Engine) -> TensorDataType;
 
         /// Get the names of all input tensors.
         fn get_input_names(self: &Engine) -> Vec<String>;
@@ -172,7 +172,7 @@ pub mod ffi {
 // Primary exports
 pub use crate::ffi::{
     Engine,
-    InputDataType,
+    TensorDataType,
     Options,
     TensorInfo,
     InputTensor,
