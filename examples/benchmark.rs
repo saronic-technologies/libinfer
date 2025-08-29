@@ -75,19 +75,36 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
 
     // Warmup.
     info!("Warming up inference codepath...");
-    for _ in 0..1024 {
+    for i in 0..1024 {
         let _output = engine.pin_mut().infer(&input_tensors).unwrap();
+        if i % 100 == 0 && i > 0 {
+            info!("Warmup progress: {}/1024", i);
+        }
     }
 
     // Measure.
     info!("Beginning {num_runs} inference runs...");
-    let latencies = (0..num_runs)
-        .map(|_| {
-            let start = Instant::now();
-            let _output = engine.pin_mut().infer(&input_tensors).unwrap();
-            start.elapsed()
-        })
-        .collect::<Vec<Duration>>();
+    let mut latencies = Vec::new();
+    let mut total_time = Duration::ZERO;
+    
+    for i in 0..num_runs {
+        let start = Instant::now();
+        let _output = engine.pin_mut().infer(&input_tensors).unwrap();
+        let elapsed = start.elapsed();
+        latencies.push(elapsed);
+        total_time += elapsed;
+        
+        // Progress logging every 10% or every 1000 iterations, whichever is more frequent
+        let progress_interval = std::cmp::min(num_runs / 10, 1000).max(1);
+        if i % progress_interval == 0 && i > 0 {
+            let avg_latency = total_time.as_secs_f32() / i as f32;
+            let remaining_runs = num_runs - i;
+            let eta_seconds = avg_latency * remaining_runs as f32;
+            info!("Progress: {}/{} runs ({:.1}%), avg latency: {:.3}ms, ETA: {:.1}s", 
+                  i, num_runs, (i as f32 / num_runs as f32) * 100.0,
+                  avg_latency * 1000.0, eta_seconds);
+        }
+    }
 
     let total_latency = latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>();
     let average_batch_latency = total_latency / latencies.len() as f32;
