@@ -1050,11 +1050,11 @@ fn print_comprehensive_results(
         
         // Determine overall status
         if max_mismatch_pct > 1.0 {
-            info!("    Status: ⚠️  SIGNIFICANT DIFFERENCES (>{:.1}% mismatch)", 1.0);
+            info!("    Status: SIGNIFICANT DIFFERENCES (>{:.1}% mismatch)", 1.0);
         } else if avg_mismatch_pct > 0.1 {
-            info!("    Status: ⚠️  MINOR DIFFERENCES (>{:.1}% avg mismatch)", 0.1);
+            info!("    Status: MINOR DIFFERENCES (>{:.1}% avg mismatch)", 0.1);
         } else {
-            info!("    Status: ✅ OUTPUTS MATCH WITHIN TOLERANCE");
+            info!("    Status: OUTPUTS MATCH WITHIN TOLERANCE");
         }
     }
     
@@ -1073,10 +1073,10 @@ fn print_comprehensive_results(
     });
     
     if has_significant_diffs {
-        info!("OVERALL STATUS: ⚠️  Models have significant output differences");
+        info!("OVERALL STATUS: Models have significant output differences");
         info!("RECOMMENDATION: Review model conversion or increase tolerance");
     } else {
-        info!("OVERALL STATUS: ✅ Models produce consistent results");
+        info!("OVERALL STATUS: Models produce consistent results");
         if let Some(bench) = benchmark_results {
             info!("RECOMMENDATION: TensorRT provides {:.1}x speedup with good accuracy", bench.speedup_factor);
         }
