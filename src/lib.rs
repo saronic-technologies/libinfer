@@ -214,5 +214,52 @@ impl Engine {
     }
 }
 
+impl OutputTensor {
+    /// Get a zero-copy view of the output data as f32 slice.
+    /// Panics if the tensor data type is not FP32.
+    pub fn as_f32_view(&self) -> &[f32] {
+        match self.dtype {
+            TensorDataType::FP32 => {
+                let (_, data, _) = unsafe { self.data.align_to::<f32>() };
+                data
+            }
+            _ => panic!("OutputTensor dtype is {:?}, expected FP32", self.dtype),
+        }
+    }
+
+    /// Get a zero-copy view of the output data as u8 slice.
+    /// Panics if the tensor data type is not UINT8.
+    pub fn as_u8_view(&self) -> &[u8] {
+        match self.dtype {
+            TensorDataType::UINT8 => &self.data,
+            _ => panic!("OutputTensor dtype is {:?}, expected UINT8", self.dtype),
+        }
+    }
+
+    /// Get a zero-copy view of the output data as i64 slice.
+    /// Panics if the tensor data type is not INT64.
+    pub fn as_i64_view(&self) -> &[i64] {
+        match self.dtype {
+            TensorDataType::INT64 => {
+                let (_, data, _) = unsafe { self.data.align_to::<i64>() };
+                data
+            }
+            _ => panic!("OutputTensor dtype is {:?}, expected INT64", self.dtype),
+        }
+    }
+
+    /// Get a zero-copy view of the output data as bool slice.
+    /// Panics if the tensor data type is not BOOL.
+    pub fn as_bool_view(&self) -> &[bool] {
+        match self.dtype {
+            TensorDataType::BOOL => {
+                let (_, data, _) = unsafe { self.data.align_to::<bool>() };
+                data
+            }
+            _ => panic!("OutputTensor dtype is {:?}, expected BOOL", self.dtype),
+        }
+    }
+}
+
 // Engine is not thread safe, but can be moved between threads.
 unsafe impl Send for ffi::Engine {}

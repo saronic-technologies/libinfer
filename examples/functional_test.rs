@@ -137,8 +137,8 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
 
     let output_tensors = engine.pin_mut().infer(&input_tensors).unwrap();
     
-    // Get the first output tensor
-    let actual = &output_tensors[0].data;
+    // Get the first output tensor as f32 view
+    let actual = output_tensors[0].as_f32_view();
 
     // Check that the entire output length is correct.
     assert_eq!(actual.len(), expected_output_size);

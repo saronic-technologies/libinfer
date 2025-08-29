@@ -179,16 +179,45 @@ void Engine::load() {
 
   // Allocate GPU memory for input and output buffers
   mOutputLengths.clear();
+  mTensorMetadata.clear();
+  mInputTensorIndices.clear();
+  mOutputTensorIndices.clear();
+  
+  // Pre-compute and cache tensor metadata for performance
+  int inputCount = 0;
+  int outputCount = 0;
+  
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
     mIOTensorNames.emplace_back(tensorName);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
+    
+    // Cache tensor metadata
+    TensorMetadata metadata;
+    metadata.name = std::string(tensorName);
+    metadata.ioMode = tensorType;
+    metadata.dataType = tensorDataType;
+    metadata.dataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
+    metadata.tensorIndex = i;
+    
+    if (tensorType == TensorIOMode::kINPUT) {
+      metadata.ioSpecificIndex = inputCount;
+      mInputTensorIndices.push_back(i);
+      inputCount++;
+    } else if (tensorType == TensorIOMode::kOUTPUT) {
+      metadata.ioSpecificIndex = outputCount;
+      mOutputTensorIndices.push_back(i);
+      outputCount++;
+    }
+    
+    mTensorMetadata.push_back(metadata);
+    
     if (tensorType == TensorIOMode::kINPUT) {
       // Store the input dims for later use.
       mInputDims.push_back(tensorShape);
-      const size_t inputDataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
+      const size_t inputDataTypeSize = metadata.dataTypeSize;
 
       mMinBatchSize =
           mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN)
@@ -253,191 +282,125 @@ void Engine::load() {
 }
 
 rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
-  spdlog::debug("Engine::infer() called with {} input tensors", input.size());
-  
   // Create a map from tensor name to input data for easy lookup
   std::unordered_map<std::string, const InputTensor*> inputMap;
   for (const auto &tensorInput : input) {
-    spdlog::debug("Processing input tensor '{}' with {} bytes", 
-                  std::string(tensorInput.name), tensorInput.data.size());
     inputMap[std::string(tensorInput.name)] = &tensorInput;
   }
 
   // Track the batch size (should be consistent across all inputs)
   int32_t batchSize = -1;
   
-  spdlog::debug("Processing {} IO tensors from engine", mEngine->getNbIOTensors());
-  
-  // Process each input tensor
-  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
-    const auto tensorName = mEngine->getIOTensorName(i);
-    const auto tensorType = mEngine->getTensorIOMode(tensorName);
-    const auto tensorDataType = mEngine->getTensorDataType(tensorName);
-    const auto tensorDataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
-
-    spdlog::debug("Processing IO tensor {}: '{}', type={}, datatype={}",
-                  i, std::string(tensorName), 
-                  (tensorType == TensorIOMode::kINPUT ? "INPUT" : "OUTPUT"),
-                  tensorDataTypeSize);
-
-    if (tensorType != TensorIOMode::kINPUT) {
-      continue; // If not a tensor input skip
+  // Process each input tensor using cached metadata
+  for (const auto &metadata : mTensorMetadata) {
+    if (metadata.ioMode != TensorIOMode::kINPUT) {
+      continue;
     }
     
     // Find the corresponding input data
-    auto it = inputMap.find(tensorName);
+    auto it = inputMap.find(metadata.name);
     if (it == inputMap.end()) {
-      spdlog::error("Missing input tensor: '{}'", std::string(tensorName));
-      throw std::runtime_error("Missing input tensor: " + std::string(tensorName));
+      throw std::runtime_error("Missing input tensor: " + metadata.name);
     }
     
     const auto &tensorInput = *it->second;
-    spdlog::debug("Found input tensor '{}' with {} bytes", std::string(tensorInput.name), tensorInput.data.size());
-    
-    const auto &dims = mInputDims[i]; // Assuming mInputDims indexed by tensor order
-    spdlog::debug("Input dims for tensor {}: nbDims={}", i, dims.nbDims);
+    const auto &dims = mInputDims[metadata.ioSpecificIndex];
     
     // Calculate expected tensor size (excluding batch dimension)
     size_t tensorSize = 1;
     for (int d = 1; d < dims.nbDims; ++d) {
-      spdlog::debug("Tensor dimension {}: {}", d, dims.d[d]);
       tensorSize *= dims.d[d];
     }
-    spdlog::debug("Base tensor size (before data type): {}", tensorSize);
-    tensorSize *= tensorDataTypeSize; // Account for data type size
-    spdlog::debug("Tensor size after data type ({}): {}", tensorDataTypeSize, tensorSize);
+    tensorSize *= metadata.dataTypeSize;
     
     // Calculate batch size from input data
     int32_t currentBatchSize = tensorInput.data.size() / tensorSize;
-    spdlog::debug("Calculated batch size: {} (input.size={}, tensorSize={})", 
-                  currentBatchSize, tensorInput.data.size(), tensorSize);
     
     if (batchSize == -1) {
       batchSize = currentBatchSize;
-      spdlog::debug("Set batch size to: {} (min={}, max={})", batchSize, mMinBatchSize, mMaxBatchSize);
       
       // Validate batch size constraints
       if (batchSize < mMinBatchSize) {
-        spdlog::error("Input batch size {} is less than minimum: {}", batchSize, mMinBatchSize);
         throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
                                " is less than minimum: " + std::to_string(mMinBatchSize));
       }
       if (batchSize > mMaxBatchSize) {
-        spdlog::error("Input batch size {} is greater than maximum: {}", batchSize, mMaxBatchSize);
         throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
                                " is greater than maximum: " + std::to_string(mMaxBatchSize));
       }
     } else if (currentBatchSize != batchSize) {
-      spdlog::error("Inconsistent batch sizes: {} vs {}", currentBatchSize, batchSize);
       throw std::runtime_error("Inconsistent batch sizes across input tensors");
     }
     
     // Validate input tensor size
     if (tensorInput.data.size() % tensorSize != 0) {
-      spdlog::error("Input tensor '{}' size validation failed: {} bytes, expected multiple of {}", 
-                    std::string(tensorName), tensorInput.data.size(), tensorSize);
-      throw std::runtime_error("Input tensor '" + std::string(tensorName) + 
+      throw std::runtime_error("Input tensor '" + metadata.name + 
                               "' does not contain whole number of batches");
     }
     
     // Set input shape with batch dimension
     nvinfer1::Dims inputDims = dims;
     inputDims.d[0] = batchSize;
-    spdlog::debug("Setting input shape for '{}': batch_dim={}", std::string(tensorName), batchSize);
-    bool shapeStatus = mContext->setInputShape(tensorName, inputDims);
+    bool shapeStatus = mContext->setInputShape(metadata.name.c_str(), inputDims);
     if (!shapeStatus) {
-      spdlog::error("Failed to set input shape for tensor '{}'", std::string(tensorName));
-      throw std::runtime_error("Failed to set input shape for tensor: " + std::string(tensorName));
+      throw std::runtime_error("Failed to set input shape for tensor: " + metadata.name);
     }
     
     // Copy input data to GPU buffer
-    spdlog::debug("Copying {} bytes to GPU buffer for tensor '{}'", tensorInput.data.size(), std::string(tensorName));
-    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
+    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[metadata.tensorIndex], tensorInput.data.data(), 
                                       tensorInput.data.size(),
                                       cudaMemcpyHostToDevice, mInferenceCudaStream));
   }
 
-  spdlog::debug("Synchronizing CUDA stream after input copy");
   checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
   
   // Ensure all dynamic bindings have been defined
-  spdlog::debug("Checking if all input dimensions are specified");
   if (!mContext->allInputDimensionsSpecified()) {
-    spdlog::error("Not all required input dimensions specified");
     throw std::runtime_error("Error, not all required dimensions specified.");
   }
   
-  // Set the address of all input and output buffers
-  spdlog::debug("Setting tensor addresses for {} IO tensors", mEngine->getNbIOTensors());
-  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
-    const auto tensorName = mEngine->getIOTensorName(i);
-    spdlog::debug("Setting tensor address for '{}' at buffer index {}", std::string(tensorName), i);
-    bool status = mContext->setTensorAddress(tensorName, mBuffers[i]);
+  // Set the address of all input and output buffers using cached indices
+  for (const auto &metadata : mTensorMetadata) {
+    bool status = mContext->setTensorAddress(metadata.name.c_str(), mBuffers[metadata.tensorIndex]);
     if (!status) {
-      spdlog::error("Failed to set tensor address for '{}'", std::string(tensorName));
-      throw std::runtime_error("Unable to set tensor address for: " + std::string(tensorName));
+      throw std::runtime_error("Unable to set tensor address for: " + metadata.name);
     }
   }
   
   // Run inference
-  spdlog::debug("Starting inference execution (enqueueV3)");
   bool status = mContext->enqueueV3(mInferenceCudaStream);
   if (!status) {
-    spdlog::error("Inference execution failed");
     throw std::runtime_error("Inference execution failed");
   }
-  spdlog::debug("Inference execution completed successfully");
   
-  // Collect output tensors
-  spdlog::debug("Collecting output tensors");
+  // Collect output tensors using cached metadata
   rust::Vec<OutputTensor> outputs;
   
-  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
-    const auto tensorName = mEngine->getIOTensorName(i);
-    const auto tensorType = mEngine->getTensorIOMode(tensorName);
-    const auto tensorDataType = mEngine->getTensorDataType(tensorName);
-    const auto tensorDataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
-
-    if (tensorType != TensorIOMode::kOUTPUT) {
-      continue; // skip if not tensor output
+  for (const auto &metadata : mTensorMetadata) {
+    if (metadata.ioMode != TensorIOMode::kOUTPUT) {
+      continue;
     }
     
-    spdlog::debug("Processing output tensor {}: '{}', datatype_size={}", 
-                  i, std::string(tensorName), tensorDataTypeSize);
-    
-    // Find the output length for this tensor
-    size_t outputIdx = 0; // Need to map from tensor index to output index
-    for (int j = 0; j < i; ++j) {
-      if (mEngine->getTensorIOMode(mEngine->getIOTensorName(j)) == TensorIOMode::kOUTPUT) {
-        outputIdx++;
-      }
-    }
-    
-    const auto outputLen = batchSize * mOutputLengths[outputIdx];
-    spdlog::debug("Output tensor '{}': outputIdx={}, base_length={}, batch_size={}, total_elements={}", 
-                  std::string(tensorName), outputIdx, mOutputLengths[outputIdx], batchSize, outputLen);
+    const auto outputLen = batchSize * mOutputLengths[metadata.ioSpecificIndex];
     
     // Create output tensor
     OutputTensor output;
-    size_t copySize = outputLen * tensorDataTypeSize;
-    output.name = std::string(tensorName);
-    spdlog::debug("Resizing output data vector to {} bytes", copySize);
+    size_t copySize = outputLen * metadata.dataTypeSize;
+    output.name = metadata.name;
+    output.dtype = toTensorDataType(metadata.dataType);
     resize(output.data, copySize);
     
     // Copy data from GPU buffer
-    spdlog::debug("Copying {} bytes from GPU buffer for tensor '{}'", copySize, std::string(tensorName));
     checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
-                                      static_cast<char*>(mBuffers[i]),
+                                      static_cast<char*>(mBuffers[metadata.tensorIndex]),
                                       copySize, 
                                       cudaMemcpyDeviceToHost, mInferenceCudaStream));
     
     outputs.push_back(std::move(output));
   }
   
-  spdlog::debug("Synchronizing CUDA stream after output copy");
   checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
   
-  spdlog::debug("Engine::infer() completed successfully with {} outputs", outputs.size());
   return outputs;
 }
 
