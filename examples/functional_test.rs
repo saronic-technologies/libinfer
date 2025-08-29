@@ -103,7 +103,6 @@ fn test_output_dim(engine: &UniquePtr<Engine>) {
 fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: &[f32]) {
     info!("Testing output features...");
     let batch_size = engine.get_batch_dims().opt;
-    let input_names = engine.get_input_names();
     
     // Create TensorInput for the first input tensor
     let ext_input_data = {
@@ -120,7 +119,7 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
 
     let input_dims = engine.get_input_dims();
     let input_tensors = vec![InputTensor {
-        name: input_names[0].clone(),
+        name: input_dims[0].name.clone(),
         data: ext_input_data,
         dtype: input_dims[0].dtype.clone(),
     }];
