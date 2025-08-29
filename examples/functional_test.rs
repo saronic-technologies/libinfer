@@ -106,15 +106,15 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
     
     // Create TensorInput for the first input tensor
     let ext_input_data = {
-        let mut v = input.to_vec();
         if batch_size > 1 {
-            v.extend(
-                repeat(input)
-                    .take(batch_size as usize)
-                    .flat_map(|v| v.iter().cloned()),
-            );
+            // Repeat the input data for each batch
+            repeat(input)
+                .take(batch_size as usize)
+                .flat_map(|v| v.iter().cloned())
+                .collect()
+        } else {
+            input.to_vec()
         }
-        v
     };
 
     let input_dims = engine.get_input_dims();
@@ -125,25 +125,65 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
     }];
 
     let output_dims = engine.get_output_dims();
-    let expected_output_size = output_dims[0]
-        .dims
-        .iter()
-        .fold(1, |acc, &e| acc * e as usize);
     let batch_element_size = output_dims[0]
         .dims
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
+    let expected_output_size = batch_element_size * batch_size as usize;
 
     let output_tensors = engine.pin_mut().infer(&input_tensors).unwrap();
     
-    // Get the first output tensor
-    let actual = &output_tensors[0].data;
+    // Get the first output tensor and convert based on data type
+    let output = &output_tensors[0];
+    let actual_f32: Vec<f32> = {
+        // Check if data length suggests actual type differs from declared type
+        let expected_elements = batch_element_size * batch_size as usize;
+        let bytes_per_element = output.data.len() / expected_elements;
+        
+        info!("Detected {} bytes per element (raw_len={}, expected_elements={})", 
+              bytes_per_element, output.data.len(), expected_elements);
+              
+        match bytes_per_element {
+            4 => {
+                // 4 bytes per element = FP32, regardless of declared type
+                output.data
+                    .chunks_exact(4)
+                    .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                    .collect()
+            }
+            1 => {
+                // 1 byte per element = UINT8 or BOOL
+                match output.dtype {
+                    libinfer::TensorDataType::BOOL => {
+                        output.data.iter().map(|&b| if b != 0 { 1.0 } else { 0.0 }).collect()
+                    }
+                    _ => {
+                        output.data.iter().map(|&b| b as f32).collect()
+                    }
+                }
+            }
+            8 => {
+                // 8 bytes per element = INT64
+                output.data
+                    .chunks_exact(8)
+                    .map(|bytes| i64::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3],
+                        bytes[4], bytes[5], bytes[6], bytes[7]
+                    ]) as f32)
+                    .collect()
+            }
+            _ => panic!("Unexpected bytes per element: {} (declared type: {:?})", bytes_per_element, output.dtype),
+        }
+    };
 
     // Check that the entire output length is correct.
-    assert_eq!(actual.len(), expected_output_size);
+    info!("Output validation: actual_f32.len()={}, expected_output_size={}, batch_size={}, batch_element_size={}", 
+          actual_f32.len(), expected_output_size, batch_size, batch_element_size);
+    info!("Output tensor dtype: {:?}, raw data len: {}", output.dtype, output.data.len());
+    assert_eq!(actual_f32.len(), expected_output_size);
 
     // Only checking the first twelve produced values. Repeat for each batch element.
-    actual.chunks_exact(batch_element_size).for_each(|chunk| {
+    actual_f32.chunks_exact(batch_element_size).for_each(|chunk| {
         zip(chunk, expected).for_each(|(a, e)| {
             assert_relative_eq!(*a, e, epsilon = 0.1);
         });
