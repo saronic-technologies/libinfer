@@ -1,6 +1,6 @@
 [package]
 name = "libinfer"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "Rust interface to TensorRT for high-performance GPU inference"
 authors = ["Saronic Technologies"]
