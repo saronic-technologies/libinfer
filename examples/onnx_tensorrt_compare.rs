@@ -723,10 +723,13 @@ fn main() -> Result<()> {
     let mut input_data_list_f32: Option<Vec<Vec<f32>>> = None;
     
     for input_info in &input_dims {
+        info!("Preparing input tensor '{}' with dims {:?} and dtype {:?}", input_info.name, input_info.dims, input_info.dtype);
         // Create dimensions with batch size = 1
         let dims_with_batch: Vec<u32> = std::iter::once(1u32)
             .chain(input_info.dims.iter().cloned())
             .collect();
+
+        info!("Generating random data for input '{}', dims={:?}", input_info.name, dims_with_batch);
         
         let data_u8 = match input_data_type {
             TensorDataType::UINT8 => {
