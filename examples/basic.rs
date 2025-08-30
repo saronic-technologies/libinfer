@@ -131,7 +131,7 @@ fn main() {
                     // Print output information on first iteration
                     info!("Inference successful! Output tensors:");
                     for output in &outputs {
-                        info!("  '{}': {} elements", output.name, output.data.len());
+                        info!("  '{}' type {:?} : {} elements", output.name, output.dtype, output.data.len());
                     }
                 }
             }

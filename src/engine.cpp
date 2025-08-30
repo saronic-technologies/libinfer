@@ -382,6 +382,7 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     OutputTensor output;
     size_t copySize = outputLen * metadata.dataTypeSize;
     output.name = metadata.name;
+    output.dtype = toTensorDataType(metadata.dataType);
     resize(output.data, copySize);
     
     // Copy data from GPU buffer
