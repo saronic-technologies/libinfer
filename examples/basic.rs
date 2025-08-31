@@ -86,11 +86,12 @@ fn main() {
     let mut input_tensors = Vec::new();
     
     for input_info in &input_infos {
-        // Calculate tensor size from shape (add batch dimension of 1)
-        let shape_with_batch: Vec<i64> = std::iter::once(1i64)
-            .chain(input_info.shape.iter().cloned())
-            .collect();
-        let input_size = shape_with_batch.iter().fold(1, |acc, &e| acc * e as usize);
+        // Calculate tensor size from shape use 1 for all dynamic dimensions (which are -1) 
+        let new_shape: Vec<i64> = input_info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
+        let input_size = input_info.shape.iter().fold(1, |acc, &e| {
+            let e = if e == -1 { 1 } else { e };
+            acc * e as usize
+        });
 
         // Create appropriate input data based on data type
         let input_data = match input_info.dtype {
@@ -113,7 +114,7 @@ fn main() {
         input_tensors.push(TensorInstance {
             name: input_info.name.clone(),
             data: input_data,
-            shape: shape_with_batch,
+            shape: new_shape,
             dtype: input_info.dtype.clone(),
         });
     }

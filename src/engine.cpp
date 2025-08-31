@@ -529,9 +529,8 @@ rust::Vec<TensorInfo> Engine::get_input_tensor_info() const {
       TensorInfo info;
       info.name = metadata.name;
       resize(info.shape, 0);
-      // Skip batch dimension (index 0)
-      for (int j = 1; j < metadata.shape.nbDims; ++j) {
-        info.shape.push_back(static_cast<uint32_t>(metadata.shape.d[j]));
+      for (int j = 0; j < metadata.shape.nbDims; ++j) {
+        info.shape.push_back(metadata.shape.d[j]);
       }
       info.dtype = toTensorDataType(metadata.dataType);
       result.push_back(std::move(info));
@@ -547,9 +546,8 @@ rust::Vec<TensorInfo> Engine::get_output_tensor_info() const {
       TensorInfo info;
       info.name = metadata.name;
       resize(info.shape, 0);
-      // Skip batch dimension (index 0)
-      for (int j = 1; j < metadata.shape.nbDims; ++j) {
-        info.shape.push_back(static_cast<uint32_t>(metadata.shape.d[j]));
+      for (int j = 0; j < metadata.shape.nbDims; ++j) {
+        info.shape.push_back(metadata.shape.d[j]);
       }
       info.dtype = toTensorDataType(metadata.dataType);
       result.push_back(std::move(info));
