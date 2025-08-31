@@ -78,9 +78,11 @@ public:
   rust::Vec<OutputTensor> infer(const rust::Vec<InputTensor> &input);
 
   // Get dimensions for all input tensors
-  rust::Vec<TensorInfo> get_input_dims() const;
+  rust::Vec<TensorInfo> get_input_tensor_info() const;
 
-  rust::Vec<uint32_t> _get_batch_dims() const {
+  rust::Vec<uint32_t> _get_axis_profile(std::string input_tensor_name, size_t axis) const {
+    // TODO: replace this logic with something that can get these sizes for the specified 
+    // input tensor and axis.
     rust::Vec<uint32_t> rv;
     rv.push_back(mMinBatchSize);
     rv.push_back(mOptBatchSize);
@@ -89,13 +91,11 @@ public:
   }
 
   // Get dimensions for all output tensors
-  rust::Vec<TensorInfo> get_output_dims() const;
-
-  uint32_t get_output_len() const { return mOutputLengths.empty() ? 0 : mOutputLengths[0]; }
+  rust::Vec<TensorInfo> get_output_tensor_info() const;
 
   // New methods for multi-tensor support
-  size_t get_num_inputs() const;
-  size_t get_num_outputs() const;
+  size_t get_num_input_tensors() const;
+  size_t get_num_output_tensors() const;
 
 private:
   // Tensor metadata stored at construction time
@@ -105,18 +105,14 @@ private:
     nvinfer1::DataType dataType;
     size_t dataTypeSize;
     nvinfer1::Dims dims;
+    int64_t minBatchSize;
+    int64_t optBatchSize;
+    int64_t maxBatchSize;
   };
 
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
-  std::vector<uint32_t> mOutputLengths{};
-  std::vector<nvinfer1::Dims> mInputDims;
-  std::vector<nvinfer1::Dims> mOutputDims;
-  std::vector<std::string> mIOTensorNames;
   std::vector<TensorMetadata> mTensorMetadata; // Cached tensor metadata
-  int32_t mMinBatchSize;
-  int32_t mOptBatchSize;
-  int32_t mMaxBatchSize;
 
   // Must keep IRuntime around for inference, see:
   // https://forums.developer.nvidia.com/t/is-it-safe-to-deallocate-nvinfer1-iruntime-after-creating-an-nvinfer1-icudaengine-but-before-running-inference-with-said-icudaengine/255381/2?u=cyruspk4w6

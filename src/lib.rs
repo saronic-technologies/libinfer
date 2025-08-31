@@ -63,7 +63,7 @@ pub mod ffi {
     /// Tensor dimension information
     struct TensorInfo {
         name: String,
-        dims: Vec<u32>,
+        shape: Vec<i64>, // -1 for dynamic dimensions
         dtype: TensorDataType,
     }
 
@@ -72,6 +72,7 @@ pub mod ffi {
     struct InputTensor {
         name: String,
         data: Vec<u8>,
+        shape: Vec<u32>, // always positive because has actual data
         dtype: TensorDataType,
     }
     
@@ -80,6 +81,7 @@ pub mod ffi {
     struct OutputTensor {
         name: String,
         data: Vec<u8>,
+        shape: Vec<u32>, // always positive because has actual data
         dtype: TensorDataType,
     }
 
@@ -113,30 +115,23 @@ pub mod ffi {
         ///
         /// # Returns
         /// A vector of TensorInfo containing name and dimensions for each input tensor.
-        fn get_input_dims(self: &Engine) -> Vec<TensorInfo>;
+        fn get_input_tensor_info(self: &Engine) -> Vec<TensorInfo>;
 
-        /// Return the minimum, optimized, and maximum batch dimension for this engine.
-        /// This is an internal function used by `get_batch_dims`.
-        fn _get_batch_dims(self: &Engine) -> Vec<u32>;
+        /// Return the minimum, optimized, and maximum batch dimension for this engine
+        /// This is an internal function used by `get_axis_profile`.
+        fn _get_axis_profile(self: &Engine, input_tensor_name: String, axis: usize) -> Result<Vec<u32>>;
 
         /// Return output dimensions of all output tensors, not including batch dimension.
         ///
         /// # Returns
         /// A vector of TensorInfo containing name and dimensions for each output tensor.
-        fn get_output_dims(self: &Engine) -> Vec<TensorInfo>;
-
-        /// Return the expected length of the output feature vector.
-        ///
-        /// # Returns
-        /// The total number of elements in the output tensor, equivalent to
-        /// multiplying all elements of `get_output_dims`.
-        fn get_output_len(self: &Engine) -> u32;
+        fn get_output_tensor_info(self: &Engine) -> Vec<TensorInfo>;
 
         /// Get the number of input tensors.
-        fn get_num_inputs(self: &Engine) -> usize;
+        fn get_num_input_tensors(self: &Engine) -> usize;
 
         /// Get the number of output tensors.
-        fn get_num_outputs(self: &Engine) -> usize;
+        fn get_num_output_tensors(self: &Engine) -> usize;
 
         /// Run inference on an input batch.
         ///
@@ -150,12 +145,12 @@ pub mod ffi {
         /// # Details
         /// The input batch dimension is dependent on whether the engine has been built with fixed
         /// or dynamic input batch sizes. If fixed, the input batch dimensions
-        /// must match the value returned by `get_input_dims`. Dynamic may accept any input batch size
-        /// within the range specified by `get_batch_dims`.
+        /// must match the value returned by `get_input_tensor_info`. Dynamic may accept any input batch size
+        /// within the range specified by `get_axis_profile`.
         ///
         /// The input vector must be a flattened representation of shape
-        /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
-        /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
+        /// `get_input_tensor_info` with appropriate batch dimension. Likewise, the output dimension will
+        /// be of shape `get_output_tensor_info` with batch dimension equal to input batch dimension.
         fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
     }
 }
@@ -204,8 +199,8 @@ impl Engine {
     /// For fixed-batch engines, all values will typically be the same.
     /// For dynamic-batch engines, these values represent the valid range
     /// of batch sizes that can be used.
-    pub fn get_batch_dims(self: &Engine) -> BatchDims {
-        let vs = self._get_batch_dims();
+    pub fn get_axis_profile(self: &Engine, input_tensor_name: String, axis: usize) -> Result<BatchDims> {
+        let vs = self._get_axis_profile(input_tensor_name, axis)?;
         BatchDims {
             min: vs[0],
             opt: vs[1],

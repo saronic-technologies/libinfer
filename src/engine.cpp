@@ -184,7 +184,6 @@ void Engine::load() {
   
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
-    mIOTensorNames.emplace_back(tensorName);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
@@ -199,7 +198,6 @@ void Engine::load() {
     mTensorMetadata.push_back(std::move(metadata));
     if (tensorType == TensorIOMode::kINPUT) {
       // Store the input dims for later use.
-      mInputDims.push_back(tensorShape);
       const size_t inputDataTypeSize = metadata.dataTypeSize;
 
       mMinBatchSize =
@@ -235,7 +233,6 @@ void Engine::load() {
 
       // The binding is an output
       uint32_t outputLen = 1;
-      mOutputDims.push_back(tensorShape);
 
       for (int j = 1; j < tensorShape.nbDims; ++j) {
         // We ignore j = 0 because that is the batch size, and we will take that
