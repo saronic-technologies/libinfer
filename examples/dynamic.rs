@@ -99,17 +99,17 @@ fn main() {
                 }
             };
 
-            // Create shape with batch dimension
-            let shape_with_batch: Vec<i64> = std::iter::once(batch_size as i64)
-                .chain(info.shape.iter().cloned())
-                .collect();
-            
-            let elem_count = shape_with_batch.iter().fold(1, |acc, &e| acc * e as usize);
+            // Calculate tensor size from shape use batch_size for all dynamic dimensions (which are -1) 
+            let new_shape: Vec<i64> = info.shape.iter().map(|&d| if d == -1 { batch_size } else { d }).collect();
+            let input_size = new_shape.iter().fold(1, |acc, &e| {
+                let e = if e == -1 { 1 } else { e };
+                acc * e as usize
+            });
 
             TensorInstance {
                 name: info.name.clone(),
-                data: vec![0u8; elem_count * dtype_size],
-                shape: shape_with_batch,
+                data: vec![0u8; input_size * dtype_size],
+                shape: new_shape,
                 dtype: info.dtype.clone(),
             }
         }).collect();
