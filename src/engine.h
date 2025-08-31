@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <vector>
+#include <memory>
 #include <cuda_runtime.h>
 #include <fstream>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -13,8 +14,7 @@
 
 struct Options;
 struct TensorInfo;
-struct InputTensor;
-struct OutputTensor;
+struct TensorInstance;
 enum class TensorDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
@@ -75,7 +75,7 @@ public:
   void load();
 
   // Run inference and return output tensors.
-  rust::Vec<OutputTensor> infer(const rust::Vec<InputTensor> &input);
+  rust::Vec<TensorInstance> infer(const rust::Vec<TensorInstance> &input);
 
   // Get dimensions for all input tensors
   rust::Vec<TensorInfo> get_input_tensor_info() const;
@@ -104,15 +104,17 @@ private:
     nvinfer1::TensorIOMode ioMode;
     nvinfer1::DataType dataType;
     size_t dataTypeSize;
-    nvinfer1::Dims dims;
-    int64_t minBatchSize;
-    int64_t optBatchSize;
-    int64_t maxBatchSize;
+    nvinfer1::Dims shape;
+    nvinfer1::Dims minShape;
+    nvinfer1::Dims optShape;
+    nvinfer1::Dims maxShape;
+    size_t nonDynamicSize; // number of bytes when all dynamic dimensions are set to 1
   };
 
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
-  std::vector<TensorMetadata> mTensorMetadata; // Cached tensor metadata
+  std::vector<TensorMetadata> mInputTensorMetadata; // Cached tensor metadata
+  std::vector<TensorMetadata> mOutputTensorMetadata; // Cached tensor metadata
 
   // Must keep IRuntime around for inference, see:
   // https://forums.developer.nvidia.com/t/is-it-safe-to-deallocate-nvinfer1-iruntime-after-creating-an-nvinfer1-icudaengine-but-before-running-inference-with-said-icudaengine/255381/2?u=cyruspk4w6

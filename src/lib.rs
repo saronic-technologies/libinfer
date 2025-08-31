@@ -8,7 +8,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use libinfer::{Engine, Options, InputTensor, TensorOutput, TensorInfo};
+//! use libinfer::{Engine, Options, TensorInstance, TensorInfo};
 //!
 //! // Create engine options
 //! let options = Options {
@@ -23,10 +23,10 @@
 //! let input_dims: Vec<TensorInfo> = engine.get_input_dims();
 //! 
 //! // Create input tensors
-//! let mut input_tensors: Vec<InputTensor> = Vec::new();
+//! let mut input_tensors: Vec<TensorInstance> = Vec::new();
 //! for tensor_info in input_dims {
 //!     let size = tensor_info.dims.iter().fold(1, |acc, &d| acc * d as usize);
-//!     let input_tensor = InputTensor {
+//!     let input_tensor = TensorInstance {
 //!         name: tensor_info.name,
 //!         tensor: vec![0u8; size],
 //!     };
@@ -34,7 +34,7 @@
 //! }
 //!
 //! // Run inference
-//! let outputs: Vec<TensorOutput> = engine.pin_mut().infer(&input_tensors).unwrap();
+//! let outputs: Vec<TensorInstance> = engine.pin_mut().infer(&input_tensors).unwrap();
 //!
 //! // Process outputs...
 //! for output in outputs {
@@ -69,19 +69,10 @@ pub mod ffi {
 
     #[derive(Debug, Clone)]
     /// Tensor input class
-    struct InputTensor {
+    struct TensorInstance {
         name: String,
         data: Vec<u8>,
-        shape: Vec<u32>, // always positive because has actual data
-        dtype: TensorDataType,
-    }
-    
-    #[derive(Debug, Clone)]
-    /// Tensor output class
-    struct OutputTensor {
-        name: String,
-        data: Vec<u8>,
-        shape: Vec<u32>, // always positive because has actual data
+        shape: Vec<i64>, // this should always be positive, just i64 for convenience
         dtype: TensorDataType,
     }
 
@@ -151,7 +142,7 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_tensor_info` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_tensor_info` with batch dimension equal to input batch dimension.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
+        fn infer(self: Pin<&mut Engine>, input: &Vec<TensorInstance>) -> Result<Vec<TensorInstance>>;
     }
 }
 
@@ -161,8 +152,7 @@ pub use crate::ffi::{
     TensorDataType,
     Options,
     TensorInfo,
-    InputTensor,
-    OutputTensor,
+    TensorInstance,
 };
 
 use cxx::{Exception, UniquePtr};

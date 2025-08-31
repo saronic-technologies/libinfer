@@ -178,11 +178,14 @@ void Engine::load() {
   checkCudaErrorCode(cudaStreamCreate(&stream));
 
   // Allocate GPU memory for input and output buffers
-  mOutputLengths.clear();
   mTensorMetadata.clear();
   mTensorMetadata.reserve(mEngine->getNbIOTensors());
   
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    if (tensorType != TensorIOMode::kINPUT && tensorType != TensorIOMode::kOUTPUT) {
+      throw std::runtime_error("Error, IO Tensor is neither an input or output!");
+    }
+
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
@@ -194,66 +197,42 @@ void Engine::load() {
     metadata.ioMode = tensorType;
     metadata.dataType = tensorDataType;
     metadata.dataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
-    metadata.dims = tensorShape;
-    mTensorMetadata.push_back(std::move(metadata));
-    if (tensorType == TensorIOMode::kINPUT) {
-      // Store the input dims for later use.
-      const size_t inputDataTypeSize = metadata.dataTypeSize;
+    metadata.shape = tensorShape;
+    metadata.axisProfiles.resize(tensorShape.nbDims, nullptr);
+    metadata.minShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN);
+    metadata.optShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT);
+    metadata.maxShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX);
 
-      mMinBatchSize =
-          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN)
-              .d[0];
-      mOptBatchSize =
-          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT)
-              .d[0];
-      mMaxBatchSize =
-          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX)
-              .d[0];
-
-      // multiply tensorShape dimensions except for the batch dimension
-      uint32_t inputLen = 1;
-      for (int j = 1; j < tensorShape.nbDims; ++j) {
-        // We ignore j = 0 because that is the batch size, and we will take that
-        // into account when sizing the buffer.
-        inputLen *= tensorShape.d[j];
+    size_t nonDynamicSize = 1;
+    for (int j = 0; j < tensorShape.nbDims; ++j) {
+      if (tensorShape.d[j] == -1) {
+        nonDynamicSize *= 1; // Treat dynamic dimensions as size 1
+      } else {
+        nonDynamicSize *= tensorShape.d[j];
       }
-
-      inputLen *= inputDataTypeSize; // Account for data type size
-      inputLen *= mMaxBatchSize; // Account for max batch size
-
-      // Allocate as much memory for the largest supported batch size.
-      checkCudaErrorCode(
-        cudaMallocAsync(&mBuffers[i],
-          inputLen,
-          stream
-        )
-      );
-    } else if (tensorType == TensorIOMode::kOUTPUT) {
-      const size_t outputDataTypeSize = metadata.dataTypeSize;
-
-      // The binding is an output
-      uint32_t outputLen = 1;
-
-      for (int j = 1; j < tensorShape.nbDims; ++j) {
-        // We ignore j = 0 because that is the batch size, and we will take that
-        // into account when sizing the buffer.
-        outputLen *= tensorShape.d[j];
-      }
-
-      mOutputLengths.push_back(outputLen);
-
-      outputLen *= outputDataTypeSize; // Account for data type size
-      outputLen *= mMaxBatchSize; // Account for max batch size
-
-      // Allocate as much memory for the largest supported batch size.
-      checkCudaErrorCode(cudaMallocAsync(
-          &mBuffers[i], 
-          outputLen,
-          stream));
-    } else {
-      throw std::runtime_error(
-          "Error, IO Tensor is neither an input or output!");
     }
+    metadata.nonDynamicSize = nonDynamicSize * metadata.dataTypeSize;
+
+    // find the size of the input buffer for max shape
+    // multiply tensorShape dimensions for max shape by data type size
+    uint32_t inputLen = metadata.dataTypeSize;
+    for (int j = 0; j < tensorShape.nbDims; ++j) {
+      inputLen *= metadata.maxShape.d[j];
+    }
+
+    // Allocate as much memory for the largest supported batch size.
+    checkCudaErrorCode(
+      cudaMallocAsync(&mBuffers[i],
+        inputLen,
+        stream
+      )
+    );
+
+    if (tensorType == TensorIOMode::kINPUT) {
+      mInputTensorMetadata.push_back(std::move(metadata));
+    } else if (tensorType == TensorIOMode::kOUTPUT) {
+      mOutputTensorMetadata.push_back(std::move(metadata));
+    } 
   }
 
   // Synchronize and destroy the cuda stream
@@ -261,15 +240,12 @@ void Engine::load() {
   checkCudaErrorCode(cudaStreamDestroy(stream));
 }
 
-rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
+rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) {
   // Create a map from tensor name to input data for easy lookup
-  std::unordered_map<std::string, const InputTensor*> inputMap;
+  std::unordered_map<std::string, const TensorInstance*> inputMap;
   for (const auto &tensorInput : input) {
     inputMap[std::string(tensorInput.name)] = &tensorInput;
   }
-
-  // Track the batch size (should be consistent across all inputs)
-  int32_t batchSize = -1;
   
   // Process each input tensor using cached metadata
   for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
@@ -286,43 +262,63 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     }
     
     const auto &tensorInput = *it->second;
-    const auto &dims = metadata.dims;
-    
-    // Calculate expected tensor size (excluding batch dimension)
-    size_t tensorSize = 1;
-    for (int d = 1; d < dims.nbDims; ++d) {
-      tensorSize *= dims.d[d];
+
+    // validate input shape is valid with input size 
+    if (tensorInput.shape.size() != metadata.shape.nbDims) {
+      throw std::runtime_error("Input tensor '" + metadata.name + 
+                              "' has incorrect number of dimensions: " + 
+                              std::to_string(tensorInput.shape.size()) + 
+                              ", expected: " + std::to_string(metadata.shape.nbDims));
     }
-    tensorSize *= metadata.dataTypeSize; // Account for data type size
-    
-    // Calculate batch size from input data
-    int32_t currentBatchSize = tensorInput.data.size() / tensorSize;
-    
-    if (batchSize == -1) {
-      batchSize = currentBatchSize;
+
+    size_t inputShapeSize = 1;
+    for (int j = 0; j < tensorInput.shape.size(); ++j) {
+      if (tensorInput.shape[j] < 1) {
+        throw std::runtime_error(
+                                "Invalid dimension size in input tensor '" + metadata.name + "'" + 
+                                " at index " + std::to_string(j) + ": " + std::to_string(tensorInput.shape[j])
+        );
+      }
+
+      if (tensorInput.shape[j] < metadata.minShape.d[j]) {
+        throw std::runtime_error("Input tensor '" + metadata.name + 
+                                "' dimension " + std::to_string(j) + 
+                                " is smaller than minimum: " + 
+                                std::to_string(tensorInput.shape[j]) + 
+                                " < " + std::to_string(metadata.minShape.d[j]));
+      }
+
+      if (tensorInput.shape[j] > metadata.maxShape.d[j]) {
+        throw std::runtime_error("Input tensor '" + metadata.name + 
+                                "' dimension " + std::to_string(j) + 
+                                " is larger than maximum: " + 
+                                std::to_string(tensorInput.shape[j]) + 
+                                " > " + std::to_string(metadata.maxShape.d[j]));
+      }
       
-      // Validate batch size constraints
-      if (batchSize < mMinBatchSize) {
-        throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
-                               " is less than minimum: " + std::to_string(mMinBatchSize));
-      }
-      if (batchSize > mMaxBatchSize) {
-        throw std::runtime_error("Input batch size " + std::to_string(batchSize) + 
-                               " is greater than maximum: " + std::to_string(mMaxBatchSize));
-      }
-    } else if (currentBatchSize != batchSize) {
-      throw std::runtime_error("Inconsistent batch sizes across input tensors");
+      inputShapeSize *= tensorInput.shape[j];
+    }
+
+    inputShapeSize *= metadata.dataTypeSize; // account for data type size
+    if (inputShapeSize != tensorInput.data.size()) {
+      throw std::runtime_error("Input tensor '" + metadata.name + 
+                              "' has size mismatch calculated bytes from input tensor shape: " + 
+                              std::to_string(inputShapeSize) + 
+                              " != " + std::to_string(tensorInput.data.size()));
     }
     
     // Validate input tensor size
-    if (tensorInput.data.size() % tensorSize != 0) {
+    if (tensorInput.data.size() % metadata.nonDynamicSize != 0) {
       throw std::runtime_error("Input tensor '" + metadata.name + 
-                              "' does not contain whole number of batches");
+                              "' does not contain whole number of non-dynamic elements");
     }
     
-    // Set input shape with batch dimension
-    nvinfer1::Dims inputDims = dims;
-    inputDims.d[0] = batchSize;
+    // set input shape from tensor input shape
+    const nvinfer1:: Dims inputDims = nvinfer1::Dims{static_cast<int>(tensorInput.shape.size()), {}};
+    for (int j = 0; j < inputDims.nbDims; ++j) {
+      inputDims.d[j] = static_cast<int>(tensorInput.shape[j]);
+    }
+
     bool shapeStatus = mContext->setInputShape(metadata.name.c_str(), inputDims);
     if (!shapeStatus) {
       throw std::runtime_error("Failed to set input shape for tensor: " + metadata.name);
@@ -333,8 +329,6 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
                                       tensorInput.data.size(),
                                       cudaMemcpyHostToDevice, mInferenceCudaStream));
   }
-
-  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
   
   // Ensure all dynamic bindings have been defined
   if (!mContext->allInputDimensionsSpecified()) {
@@ -356,7 +350,7 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
   }
   
   // Collect output tensors
-  rust::Vec<OutputTensor> outputs;
+  rust::Vec<TensorInstance> outputs;
   
   for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
     const auto &metadata = mTensorMetadata[i];
@@ -376,7 +370,7 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     const auto outputLen = batchSize * mOutputLengths[outputIdx];
     
     // Create output tensor
-    OutputTensor output;
+    TensorInstance output;
     size_t copySize = outputLen * metadata.dataTypeSize;
     output.name = metadata.name;
     output.dtype = toTensorDataType(metadata.dataType);
@@ -422,10 +416,10 @@ rust::Vec<TensorInfo> Engine::get_input_dims() const {
     if (metadata.ioMode == TensorIOMode::kINPUT) {
       TensorInfo info;
       info.name = metadata.name;
-      resize(info.dims, 0);
+      resize(info.shape, 0);
       // Skip batch dimension (index 0)
-      for (int j = 1; j < metadata.dims.nbDims; ++j) {
-        info.dims.push_back(static_cast<uint32_t>(metadata.dims.d[j]));
+      for (int j = 1; j < metadata.shape.nbDims; ++j) {
+        info.shape.push_back(static_cast<uint32_t>(metadata.shape.d[j]));
       }
       info.dtype = toTensorDataType(metadata.dataType);
       result.push_back(std::move(info));
@@ -440,10 +434,10 @@ rust::Vec<TensorInfo> Engine::get_output_dims() const {
     if (metadata.ioMode == TensorIOMode::kOUTPUT) {
       TensorInfo info;
       info.name = metadata.name;
-      resize(info.dims, 0);
+      resize(info.shape, 0);
       // Skip batch dimension (index 0)
-      for (int j = 1; j < metadata.dims.nbDims; ++j) {
-        info.dims.push_back(static_cast<uint32_t>(metadata.dims.d[j]));
+      for (int j = 1; j < metadata.shape.nbDims; ++j) {
+        info.shape.push_back(static_cast<uint32_t>(metadata.shape.d[j]));
       }
       info.dtype = toTensorDataType(metadata.dataType);
       result.push_back(std::move(info));
