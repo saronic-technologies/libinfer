@@ -29,7 +29,7 @@ use libinfer::{Engine, Options, TensorInstance};
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
-    iter::{repeat, zip},
+    iter::zip,
     path::PathBuf,
     str::FromStr,
 };
@@ -76,9 +76,10 @@ fn test_input_dim(engine: &UniquePtr<Engine>) {
     let input_dims = engine.get_input_tensor_info();
     assert_eq!(input_dims.len(), 1); // Expecting one input tensor
     let input_dim = &input_dims[0];
-    assert_eq!(input_dim.shape[0], 3);
-    assert_eq!(input_dim.shape[1], 640);
+    assert_eq!(input_dim.shape[0], 1);
+    assert_eq!(input_dim.shape[1], 3);
     assert_eq!(input_dim.shape[2], 640);
+    assert_eq!(input_dim.shape[3], 640);
     info!("Input dimensions: '{}' -> {:?}", input_dim.name, input_dim.shape);
 }
 
@@ -91,8 +92,9 @@ fn test_output_dim(engine: &UniquePtr<Engine>) {
     let output_dims = engine.get_output_tensor_info();
     assert_eq!(output_dims.len(), 1); // Expecting one output tensor
     let output_dim = &output_dims[0];
-    assert_eq!(output_dim.shape[0], 84);
-    assert_eq!(output_dim.shape[1], 8400);
+    assert_eq!(output_dim.shape[0], 1);
+    assert_eq!(output_dim.shape[1], 84);
+    assert_eq!(output_dim.shape[2], 8400);
     info!("Output dimensions: '{}' -> {:?}", output_dim.name, output_dim.shape);
 }
 
@@ -101,14 +103,13 @@ fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: 
     let batch_size = 1; // Use batch size 1
     
     let input_dims = engine.get_input_tensor_info();
-    let shape_with_batch: Vec<i64> = std::iter::once(batch_size as i64)
-        .chain(input_dims[0].shape.iter().cloned())
-        .collect();
+    // Calculate tensor size from shape use 1 for all dynamic dimensions (which are -1) 
+    let new_shape: Vec<i64> = input_dims[0].shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
     
     let input_tensors = vec![TensorInstance {
         name: input_dims[0].name.clone(),
         data: input.to_vec(),
-        shape: shape_with_batch,
+        shape: new_shape,
         dtype: input_dims[0].dtype.clone(),
     }];
 
