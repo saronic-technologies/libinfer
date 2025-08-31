@@ -20,7 +20,7 @@
 //! let mut engine = Engine::new(&options).unwrap();
 //!
 //! // Get input dimensions for all tensors
-//! let input_dims: Vec<TensorInfo> = engine.get_input_dims();
+//! let input_dims: Vec<TensorInfo> = engine.get_input_tensor_info();
 //! 
 //! // Create input tensors
 //! let mut input_tensors: Vec<TensorInstance> = Vec::new();
@@ -117,12 +117,6 @@ pub mod ffi {
         /// # Returns
         /// A vector of TensorInfo containing name and dimensions for each output tensor.
         fn get_output_tensor_info(self: &Engine) -> Vec<TensorInfo>;
-
-        /// Get the number of input tensors.
-        fn get_num_input_tensors(self: &Engine) -> usize;
-
-        /// Get the number of output tensors.
-        fn get_num_output_tensors(self: &Engine) -> usize;
 
         /// Run inference on an input batch.
         ///

@@ -93,10 +93,6 @@ public:
   // Get dimensions for all output tensors
   rust::Vec<TensorInfo> get_output_tensor_info() const;
 
-  // New methods for multi-tensor support
-  size_t get_num_input_tensors() const;
-  size_t get_num_output_tensors() const;
-
 private:
   // Tensor metadata stored at construction time
   struct TensorMetadata {

@@ -367,14 +367,19 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
       }
     }
     
-    const auto outputLen = batchSize * mOutputLengths[outputIdx];
+    const Dims outputShape = mContext->getBindingDimensions(outputIdx);
+    output.shape = std::vector<INT64>();
+    const auto outputLen = metadata.dataTypeSize; // start with data type size
+    for (int j = 0; j < outputShape.nbDims; ++j) {
+      outputLen *= outputShape.d[j];
+      output.shape.push_back(static_cast<INT64>(outputShape.d[j]));
+    }
     
     // Create output tensor
     TensorInstance output;
-    size_t copySize = outputLen * metadata.dataTypeSize;
     output.name = metadata.name;
     output.dtype = toTensorDataType(metadata.dataType);
-    resize(output.data, copySize);
+    resize(output.data, outputLen);
     
     // Copy data from GPU buffer
     checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
@@ -390,27 +395,7 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
   return outputs;
 }
 
-size_t Engine::get_num_inputs() const {
-  size_t count = 0;
-  for (const auto &metadata : mTensorMetadata) {
-    if (metadata.ioMode == TensorIOMode::kINPUT) {
-      count++;
-    }
-  }
-  return count;
-}
-
-size_t Engine::get_num_outputs() const {
-  size_t count = 0;
-  for (const auto &metadata : mTensorMetadata) {
-    if (metadata.ioMode == TensorIOMode::kOUTPUT) {
-      count++;
-    }
-  }
-  return count;
-}
-
-rust::Vec<TensorInfo> Engine::get_input_dims() const {
+rust::Vec<TensorInfo> Engine::get_input_tensor_info() const {
   rust::Vec<TensorInfo> result;
   for (const auto &metadata : mTensorMetadata) {
     if (metadata.ioMode == TensorIOMode::kINPUT) {
@@ -428,7 +413,7 @@ rust::Vec<TensorInfo> Engine::get_input_dims() const {
   return result;
 }
 
-rust::Vec<TensorInfo> Engine::get_output_dims() const {
+rust::Vec<TensorInfo> Engine::get_output_tensor_info() const {
   rust::Vec<TensorInfo> result;
   for (const auto &metadata : mTensorMetadata) {
     if (metadata.ioMode == TensorIOMode::kOUTPUT) {
