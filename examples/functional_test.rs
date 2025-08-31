@@ -25,8 +25,7 @@ use anyhow::Result;
 use approx::assert_relative_eq;
 use clap::Parser;
 use cxx::UniquePtr;
-use libinfer::{Engine, Options};
-use libinfer::ffi::InputTensor;
+use libinfer::{Engine, Options, TensorInstance};
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
@@ -74,59 +73,48 @@ fn parse_file_to_float_vec(path: PathBuf) -> Result<Vec<f32>> {
 }
 
 fn test_input_dim(engine: &UniquePtr<Engine>) {
-    let input_dims = engine.get_input_dims();
+    let input_dims = engine.get_input_tensor_info();
     assert_eq!(input_dims.len(), 1); // Expecting one input tensor
     let input_dim = &input_dims[0];
-    assert_eq!(input_dim.dims[0], 3);
-    assert_eq!(input_dim.dims[1], 640);
-    assert_eq!(input_dim.dims[2], 640);
-    info!("Input dimensions: '{}' -> {:?}", input_dim.name, input_dim.dims);
+    assert_eq!(input_dim.shape[0], 3);
+    assert_eq!(input_dim.shape[1], 640);
+    assert_eq!(input_dim.shape[2], 640);
+    info!("Input dimensions: '{}' -> {:?}", input_dim.name, input_dim.shape);
 }
 
 fn test_batch_dim(engine: &UniquePtr<Engine>) {
-    let batch_dim = engine.get_batch_dims();
-    assert_eq!(batch_dim.min, 1);
-    assert_eq!(batch_dim.opt, 1);
-    assert_eq!(batch_dim.max, 1);
-    info!("Batch dimensions: {batch_dim:?}");
+    let input_dims = engine.get_input_tensor_info();
+    info!("Input tensor shapes: {:?}", input_dims.iter().map(|t| (&t.name, &t.shape)).collect::<Vec<_>>());
 }
 
 fn test_output_dim(engine: &UniquePtr<Engine>) {
-    let output_dims = engine.get_output_dims();
+    let output_dims = engine.get_output_tensor_info();
     assert_eq!(output_dims.len(), 1); // Expecting one output tensor
     let output_dim = &output_dims[0];
-    assert_eq!(output_dim.dims[0], 84);
-    assert_eq!(output_dim.dims[1], 8400);
-    info!("Output dimensions: '{}' -> {:?}", output_dim.name, output_dim.dims);
+    assert_eq!(output_dim.shape[0], 84);
+    assert_eq!(output_dim.shape[1], 8400);
+    info!("Output dimensions: '{}' -> {:?}", output_dim.name, output_dim.shape);
 }
 
 fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: &[f32]) {
     info!("Testing output features...");
-    let batch_size = engine.get_batch_dims().opt;
+    let batch_size = 1; // Use batch size 1
     
-    // Create TensorInput for the first input tensor
-    let ext_input_data = {
-        if batch_size > 1 {
-            // Repeat the input data for each batch
-            repeat(input)
-                .take(batch_size as usize)
-                .flat_map(|v| v.iter().cloned())
-                .collect()
-        } else {
-            input.to_vec()
-        }
-    };
-
-    let input_dims = engine.get_input_dims();
-    let input_tensors = vec![InputTensor {
+    let input_dims = engine.get_input_tensor_info();
+    let shape_with_batch: Vec<i64> = std::iter::once(batch_size as i64)
+        .chain(input_dims[0].shape.iter().cloned())
+        .collect();
+    
+    let input_tensors = vec![TensorInstance {
         name: input_dims[0].name.clone(),
-        data: ext_input_data,
+        data: input.to_vec(),
+        shape: shape_with_batch,
         dtype: input_dims[0].dtype.clone(),
     }];
 
-    let output_dims = engine.get_output_dims();
+    let output_dims = engine.get_output_tensor_info();
     let batch_element_size = output_dims[0]
-        .dims
+        .shape
         .iter()
         .fold(1, |acc, &e| acc * e as usize);
     let expected_output_size = batch_element_size * batch_size as usize;
@@ -232,7 +220,7 @@ fn main() {
         std::process::exit(1);
     });
 
-    let input_dims = engine.get_input_dims();
+    let input_dims = engine.get_input_tensor_info();
     if !input_dims.is_empty() {
         info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
     }

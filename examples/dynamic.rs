@@ -21,8 +21,7 @@
 //!   ```
 
 use clap::Parser;
-use libinfer::{Engine, TensorDataType, Options};
-use libinfer::ffi::InputTensor;
+use libinfer::{Engine, TensorDataType, Options, TensorInstance};
 use std::{path::PathBuf, time::Instant};
 use tracing::{info, warn, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
@@ -64,37 +63,31 @@ fn main() {
         std::process::exit(1);
     });
 
-    let input_infos = engine.get_input_dims();
-    let output_infos = engine.get_output_dims();
-    let batch_dims = engine.get_batch_dims();
+    let input_infos = engine.get_input_tensor_info();
+    let output_infos = engine.get_output_tensor_info();
 
     // Print model information
     info!("Engine loaded successfully");
     info!("Number of inputs: {}", input_infos.len());
     info!("Number of outputs: {}", output_infos.len());
-    info!("Batch dimensions: min={}, optimal={}, max={}",
-         batch_dims.min, batch_dims.opt, batch_dims.max);
+    info!("Engine supports dynamic shapes");
 
-    // Check if this engine truly supports dynamic batch sizes
-    if batch_dims.min == batch_dims.max {
-        warn!("This engine does not support dynamic batch sizes!");
-        warn!("All batch dimensions are fixed at {}", batch_dims.min);
-        warn!("To test dynamic batching, you need an engine built with dynamic shapes.");
-        return;
+    // Check if this engine has dynamic dimensions
+    let has_dynamic = input_infos.iter().any(|info| info.shape.contains(&-1));
+    if !has_dynamic {
+        warn!("This engine does not appear to have dynamic dimensions!");
+        warn!("To test dynamic shapes, you need an engine built with dynamic dimensions.");
+        warn!("Continuing with fixed shapes...");
     }
 
-    // Test different batch sizes within the supported range
-    let batch_sizes_to_test = [
-        batch_dims.min,
-        batch_dims.opt,
-        batch_dims.max,
-    ];
+    // Test different batch sizes (using typical values)
+    let batch_sizes_to_test = [1, 4, 8];
 
     for &batch_size in &batch_sizes_to_test {
         info!("\nTesting batch size: {}", batch_size);
 
         // Create input tensors for all inputs
-        let input_tensors: Vec<InputTensor> = input_infos.iter().map(|info| {
+        let input_tensors: Vec<TensorInstance> = input_infos.iter().map(|info| {
             let dtype_size = match info.dtype {
                 TensorDataType::UINT8 => 1,
                 TensorDataType::FP32 => 4,
@@ -106,15 +99,17 @@ fn main() {
                 }
             };
 
-            let elem_count = if !input_infos.is_empty() {
-                info.dims.iter().fold(1, |acc, &e| acc * e as usize)
-            } else {
-                0
-            };
+            // Create shape with batch dimension
+            let shape_with_batch: Vec<i64> = std::iter::once(batch_size as i64)
+                .chain(info.shape.iter().cloned())
+                .collect();
+            
+            let elem_count = shape_with_batch.iter().fold(1, |acc, &e| acc * e as usize);
 
-            InputTensor {
+            TensorInstance {
                 name: info.name.clone(),
-                data: vec![0u8; elem_count * dtype_size * batch_size as usize],
+                data: vec![0u8; elem_count * dtype_size],
+                shape: shape_with_batch,
                 dtype: info.dtype.clone(),
             }
         }).collect();

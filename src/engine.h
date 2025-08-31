@@ -95,6 +95,7 @@ private:
     nvinfer1::Dims optShape;
     nvinfer1::Dims maxShape;
     size_t nonDynamicSize; // number of bytes when all dynamic dimensions are set to 1
+    int32_t bufferIndex;
   };
 
   // Holds pointers to the input and output GPU buffers

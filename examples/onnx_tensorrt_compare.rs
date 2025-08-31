@@ -24,8 +24,7 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use cxx::UniquePtr;
-use libinfer::{Engine, TensorDataType, Options};
-use libinfer::ffi::InputTensor;
+use libinfer::{Engine, TensorDataType, Options, TensorInstance};
 use ort::execution_providers::{CUDAExecutionProvider, TensorRTExecutionProvider};
 use ort::{
     session::{builder::GraphOptimizationLevel, Session},
@@ -148,7 +147,7 @@ fn run_onnx_inference_f32(session: &mut Session, input_data_list: &[Vec<f32>], i
         let input_info = &input_infos[i];
         // Create tensor with the shape provided from TensorRT (add batch dimension)
         let shape_with_batch: Vec<usize> = std::iter::once(1usize) // batch size 1
-            .chain(input_info.dims.iter().map(|&d| d as usize))
+            .chain(input_info.shape.iter().map(|&d| d as usize))
             .collect();
         
         let input_tensor = Value::from_array((shape_with_batch, input_data.clone()))?;
@@ -179,7 +178,7 @@ fn run_onnx_inference_u8(session: &mut Session, input_data_list: &[Vec<u8>], inp
         let input_info = &input_infos[i];
         // Create tensor with the shape provided from TensorRT (add batch dimension)
         let shape_with_batch: Vec<usize> = std::iter::once(1usize) // batch size 1
-            .chain(input_info.dims.iter().map(|&d| d as usize))
+            .chain(input_info.shape.iter().map(|&d| d as usize))
             .collect();
         
         let input_tensor = Value::from_array((shape_with_batch, input_data.clone()))?;
@@ -210,7 +209,7 @@ fn run_onnx_inference_int64(session: &mut Session, input_data_list: &[Vec<i64>],
         let input_info = &input_infos[i];
         // Create tensor with the shape provided from TensorRT (add batch dimension)
         let shape_with_batch: Vec<usize> = std::iter::once(1usize) // batch size 1
-            .chain(input_info.dims.iter().map(|&d| d as usize))
+            .chain(input_info.shape.iter().map(|&d| d as usize))
             .collect();
         
         let input_tensor = Value::from_array((shape_with_batch, input_data.clone()))?;
@@ -241,7 +240,7 @@ fn run_onnx_inference_bool(session: &mut Session, input_data_list: &[Vec<bool>],
         let input_info = &input_infos[i];
         // Create tensor with the shape provided from TensorRT (add batch dimension)
         let shape_with_batch: Vec<usize> = std::iter::once(1usize) // batch size 1
-            .chain(input_info.dims.iter().map(|&d| d as usize))
+            .chain(input_info.shape.iter().map(|&d| d as usize))
             .collect();
         
         let input_tensor = Value::from_array((shape_with_batch, input_data.clone()))?;
@@ -274,14 +273,19 @@ fn run_tensorrt_inference(
         let input_info = &input_infos[i];
         
         // Debug: Log tensor info
-        let expected_size_without_batch: usize = input_info.dims.iter().map(|&d| d as usize).product();
+        let expected_size_without_batch: usize = input_info.shape.iter().map(|&d| d as usize).product();
         let _expected_size_with_batch = expected_size_without_batch; // Since we already added batch to data generation
-        info!("TensorRT Input {}: name='{}', dims={:?}, data_len={}, expected_without_batch={}", 
-              i, input_info.name, input_info.dims, input_data.len(), expected_size_without_batch);
+        info!("TensorRT Input {}: name='{}', shape={:?}, data_len={}, expected_without_batch={}", 
+              i, input_info.name, input_info.shape, input_data.len(), expected_size_without_batch);
         
-        input_tensors.push(InputTensor {
+        let shape_with_batch_i64: Vec<i64> = std::iter::once(1i64)
+            .chain(input_info.shape.iter().cloned())
+            .collect();
+        
+        input_tensors.push(TensorInstance {
             name: input_info.name.clone(),
             data: input_data.clone(),
+            shape: shape_with_batch_i64,
             dtype: input_info.dtype.clone(),
         });
     }
@@ -636,8 +640,8 @@ fn main() -> Result<()> {
     info!("TensorRT engine loaded successfully");
 
     // Get model information
-    let input_dims = engine.get_input_dims();
-    let output_dims = engine.get_output_dims();
+    let input_dims = engine.get_input_tensor_info();
+    let output_dims = engine.get_output_tensor_info();
     
     // Check if all input tensors have the same data type (for backward compatibility)
     let input_data_type = if input_dims.is_empty() {
@@ -700,13 +704,13 @@ fn main() -> Result<()> {
     info!("Detailed tensor information:");
     
     for (i, input_info) in input_dims.iter().enumerate() {
-        let tensor_size: usize = input_info.dims.iter().map(|&d| d as usize).product();
-        info!("TensorRT input {}: '{}' dims={:?} size={}", i, input_info.name, input_info.dims, tensor_size);
+        let tensor_size: usize = input_info.shape.iter().map(|&d| d as usize).product();
+        info!("TensorRT input {}: '{}' shape={:?} size={}", i, input_info.name, input_info.shape, tensor_size);
     }
     
     for (i, output_info) in output_dims.iter().enumerate() {
-        let tensor_size: usize = output_info.dims.iter().map(|&d| d as usize).product();
-        info!("TensorRT output {}: '{}' dims={:?} size={}", i, output_info.name, output_info.dims, tensor_size);
+        let tensor_size: usize = output_info.shape.iter().map(|&d| d as usize).product();
+        info!("TensorRT output {}: '{}' shape={:?} size={}", i, output_info.name, output_info.shape, tensor_size);
     }
 
     for (i, onnx_input) in session.inputs.iter().enumerate() {
@@ -723,13 +727,13 @@ fn main() -> Result<()> {
     let mut input_data_list_f32: Option<Vec<Vec<f32>>> = None;
     
     for input_info in &input_dims {
-        info!("Preparing input tensor '{}' with dims {:?} and dtype {:?}", input_info.name, input_info.dims, input_info.dtype);
+        info!("Preparing input tensor '{}' with shape {:?} and dtype {:?}", input_info.name, input_info.shape, input_info.dtype);
         // Create dimensions with batch size = 1
         let dims_with_batch: Vec<u32> = std::iter::once(1u32)
-            .chain(input_info.dims.iter().cloned())
+            .chain(input_info.shape.iter().map(|&d| d as u32))
             .collect();
 
-        info!("Generating random data for input '{}', dims={:?}", input_info.name, dims_with_batch);
+        info!("Generating random data for input '{}', shape={:?}", input_info.name, dims_with_batch);
         
         let data_u8 = match input_data_type {
             TensorDataType::UINT8 => {
@@ -910,7 +914,7 @@ fn main() -> Result<()> {
         for (i, (onnx_output, tensorrt_output)) in onnx_outputs.iter().zip(tensorrt_outputs.iter()).enumerate() {
             // Get output shape (with batch dimension)
             let output_shape_with_batch: Vec<u32> = std::iter::once(1u32) // batch = 1
-                .chain(output_dims[i].dims.iter().cloned())
+                .chain(output_dims[i].shape.iter().map(|&d| d as u32))
                 .collect();
             
             match calculate_output_differences(onnx_output, tensorrt_output, args.tolerance, &output_shape_with_batch) {

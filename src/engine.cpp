@@ -180,14 +180,24 @@ void Engine::load() {
   // Allocate GPU memory for input and output buffers
   mTensorMetadata.clear();
   mTensorMetadata.reserve(mEngine->getNbIOTensors());
+
+  // ASSUMPTION: we always use optimization profile 0
+  // set the optimization profile to 0 so we can query output shapes after setting input shapes
+  mContext->setOptimizationProfileAsync(0, stream);
   
+  // set metadata for input tensors first.
+  // This has to be done first because we can't find the max input shape until we have specified the inputs
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
 
-    if (tensorType != TensorIOMode::kINPUT && tensorType != TensorIOMode::kOUTPUT) {
+    if (tensorType == TensorIOMode::kOUTPUT) {
+      continue; // skip output tensors for now
+    }
+
+    if (tensorType != TensorIOMode::kINPUT) {
       throw std::runtime_error("Error, IO Tensor is neither an input or output!");
     }
     
@@ -198,6 +208,7 @@ void Engine::load() {
     metadata.dataType = tensorDataType;
     metadata.dataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
     metadata.shape = tensorShape;
+    metadata.bufferIndex = i;
     metadata.minShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN);
     metadata.optShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT);
     metadata.maxShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX);
@@ -226,9 +237,97 @@ void Engine::load() {
         stream
       )
     );
+
+    spdlog::debug("Tensor: {}, buffer index: {}, non-dynamic size (bytes): {}, max size: {}, ptr: {}",
+                  metadata.name, metadata.bufferIndex, metadata.nonDynamicSize, inputLen, mBuffers[i]);
+
+    // set the input shape to the max shape so we can query output shapes later
+    mContext->setInputShape(metadata.name.c_str(), metadata.maxShape);
     
     mTensorMetadata.push_back(std::move(metadata));
   }
+
+  // check that all input dimensions have been specified correctly
+  int32_t ok = mContext->inferShapes(0, nullptr);
+  if (ok != 0) {
+    throw std::runtime_error("Error, not all input dimensions specified correctly.");
+  }
+
+  // collect output names first
+  std::vector<std::string> outputNames;
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+
+    if (tensorType == TensorIOMode::kINPUT) {
+      continue; // skip input tensors for now
+    }
+
+    if (tensorType != TensorIOMode::kOUTPUT) {
+      throw std::runtime_error("Error, IO Tensor is neither an input or output!");
+    }
+
+    outputNames.push_back(std::string(tensorName));
+  }
+
+  for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
+    const auto tensorName = mEngine->getIOTensorName(i);
+    const auto tensorType = mEngine->getTensorIOMode(tensorName);
+    const auto tensorShape = mEngine->getTensorShape(tensorName);
+    const auto tensorDataType = mEngine->getTensorDataType(tensorName);
+
+    if (tensorType == TensorIOMode::kINPUT) {
+      continue; // skip output tensors for now
+    }
+
+    if (tensorType != TensorIOMode::kOUTPUT) {
+      throw std::runtime_error("Error, IO Tensor is neither an input or output!");
+    }
+    
+    // Store tensor metadata to avoid repeated TensorRT queries during inference
+    TensorMetadata metadata;
+    metadata.name = std::string(tensorName);
+    metadata.ioMode = tensorType;
+    metadata.dataType = tensorDataType;
+    metadata.dataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
+    metadata.shape = tensorShape;
+    metadata.bufferIndex = i;
+
+    // these shapes may have -1 for dynamic dimensions we don't need to know these
+    metadata.minShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN);
+    metadata.optShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT);
+
+    // get actual max shape from context after setting input shapes
+    metadata.maxShape = mEngine->getTensorShape(tensorName);
+
+    size_t nonDynamicSize = 1;
+    for (int j = 0; j < tensorShape.nbDims; ++j) {
+      if (tensorShape.d[j] == -1) {
+        nonDynamicSize *= 1; // Treat dynamic dimensions as size 1
+      } else {
+        nonDynamicSize *= tensorShape.d[j];
+      }
+    }
+    metadata.nonDynamicSize = nonDynamicSize * metadata.dataTypeSize;
+
+    // find max output size in bytes
+    const int64_t inputLen = mContext->getMaxOutputSize(metadata.name.c_str());
+
+    // Allocate as much memory for the largest supported batch size.
+    checkCudaErrorCode(
+      cudaMallocAsync(&mBuffers[i],
+        inputLen,
+        stream
+      )
+    );
+
+    spdlog::debug("Output Tensor: {}, buffer index: {}, non-dynamic size (bytes): {}, max size: {}, ptr: {}",
+                  metadata.name, metadata.bufferIndex, metadata.nonDynamicSize, inputLen, mBuffers[i]);
+    
+    mTensorMetadata.push_back(std::move(metadata));
+  }
+
+  // Now set metadata for output tensors
 
   // Synchronize and destroy the cuda stream
   checkCudaErrorCode(cudaStreamSynchronize(stream));
@@ -321,7 +420,7 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
     }
     
     // Copy input data to GPU buffer
-    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
+    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[metadata.bufferIndex], tensorInput.data.data(), 
                                       tensorInput.data.size(),
                                       cudaMemcpyHostToDevice, mInferenceCudaStream));
   }
@@ -333,7 +432,12 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
   
   // Set the address of all input and output buffers using cached names
   for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
-    bool status = mContext->setTensorAddress(mTensorMetadata[i].name.c_str(), mBuffers[i]);
+    // degug log the tensor names and buffer indices and buffer size
+  
+    spdlog::debug("Setting tensor address for: {}, buffer index: {}, buffer ptr: {}",
+                  mTensorMetadata[i].name, mTensorMetadata[i].bufferIndex, mBuffers[mTensorMetadata[i].bufferIndex]);
+
+    bool status = mContext->setTensorAddress(mTensorMetadata[i].name.c_str(), mBuffers[mTensorMetadata[i].bufferIndex]);
     if (!status) {
       throw std::runtime_error("Unable to set tensor address for: " + mTensorMetadata[i].name);
     }
@@ -358,8 +462,20 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
   }
 
   // verify output shapes
-  if (!mContext->inferShapes(numNames, outputNames)) {
-    throw std::runtime_error("Shape inference failed");
+  const int32_t error_code = mContext->inferShapes(numNames, outputNames);
+  if (error_code > 0) {
+    // create a comma separated list of output names
+    std::string namesCombined;
+    for (int i = 0; i < numNames; ++i) {
+      namesCombined += outputNames[i];
+      if (i < numNames - 1) {
+        namesCombined += ", ";
+      }
+    }
+
+    throw std::runtime_error(
+      "Failed to infer output shapes, for output names : " + std::string(namesCombined)
+      + ", " + std::to_string(error_code) + " input tensors not specified correctly.");
   }
   
   // Run inference
@@ -394,7 +510,7 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
     
     // Copy data from GPU buffer
     checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
-                                      static_cast<char*>(mBuffers[i]),
+                                      static_cast<char*>(mBuffers[metadata.bufferIndex]),
                                       outputLen, 
                                       cudaMemcpyDeviceToHost, mInferenceCudaStream));
     
