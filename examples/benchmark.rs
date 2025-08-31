@@ -42,18 +42,18 @@ struct Args {
 
 fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let input_dims = engine.get_input_tensor_info();
-    let batch_size = 1; // Use batch size 1 for simplicity
     
     // Create input tensors for all inputs with per-tensor data types
     let input_tensors: Vec<TensorInstance> = input_dims.iter().map(|input_info| {
         info!("Input tensor '{}' has shape {:?} and dtype {:?}", input_info.name, input_info.shape, input_info.dtype);
 
-        // Create shape with batch dimension
-        let shape_with_batch: Vec<i64> = std::iter::once(batch_size as i64)
-            .chain(input_info.shape.iter().cloned())
-            .collect();
-        let input_len = shape_with_batch.iter().fold(1, |acc, &e| acc * e as usize);
-        
+        // Calculate tensor size from shape use 1 for all dynamic dimensions (which are -1) 
+        let new_shape: Vec<i64> = input_info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
+        let input_len = input_info.shape.iter().fold(1, |acc, &e| {
+            let e = if e == -1 { 1 } else { e };
+            acc * e as usize
+        });        
+
         let input_data: Vec<u8> = match input_info.dtype {
             TensorDataType::UINT8 => repeat(0).take(input_len).collect(),
             TensorDataType::FP32 => repeat(0).take(4 * input_len).collect(),
@@ -68,7 +68,7 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
         let input = TensorInstance {
             name: input_info.name.clone(),
             data: input_data,
-            shape: shape_with_batch,
+            shape: new_shape,
             dtype: input_info.dtype.clone(),
         };
         
@@ -113,13 +113,9 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let total_latency = latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>();
     let average_batch_latency = total_latency / latencies.len() as f32;
     let average_batch_framerate = 1.0 / average_batch_latency;
-    let average_frame_latency = total_latency / (latencies.len() as f32 * batch_size as f32);
-    let average_frame_framerate = 1.0 / average_frame_latency;
 
     info!("inference calls    : {}", num_runs);
     info!("total latency      : {}", total_latency);
-    info!("avg. frame latency : {}", average_frame_latency);
-    info!("avg. frame fps     : {}", average_frame_framerate);
     info!("avg. batch latency : {}", average_batch_latency);
     info!("avg. batch fps     : {}", average_batch_framerate);
 }
