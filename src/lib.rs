@@ -108,10 +108,6 @@ pub mod ffi {
         /// A vector of TensorInfo containing name and dimensions for each input tensor.
         fn get_input_tensor_info(self: &Engine) -> Vec<TensorInfo>;
 
-        /// Return the minimum, optimized, and maximum batch dimension for this engine
-        /// This is an internal function used by `get_axis_profile`.
-        fn _get_axis_profile(self: &Engine, input_tensor_name: String, axis: usize) -> Result<Vec<u32>>;
-
         /// Return output dimensions of all output tensors, not including batch dimension.
         ///
         /// # Returns
@@ -127,15 +123,9 @@ pub mod ffi {
         /// A Result containing either the output tensor data as a vector of f32 values,
         /// or an error message if inference failed.
         ///
-        /// # Details
-        /// The input batch dimension is dependent on whether the engine has been built with fixed
-        /// or dynamic input batch sizes. If fixed, the input batch dimensions
-        /// must match the value returned by `get_input_tensor_info`. Dynamic may accept any input batch size
-        /// within the range specified by `get_axis_profile`.
-        ///
         /// The input vector must be a flattened representation of shape
-        /// `get_input_tensor_info` with appropriate batch dimension. Likewise, the output dimension will
-        /// be of shape `get_output_tensor_info` with batch dimension equal to input batch dimension.
+        /// `get_input_tensor_info` with appropriate dynamic dimensions. Likewise, the output dimension will
+        /// be of shape `get_output_tensor_info`.
         fn infer(self: Pin<&mut Engine>, input: &Vec<TensorInstance>) -> Result<Vec<TensorInstance>>;
     }
 }
@@ -172,24 +162,6 @@ impl Engine {
     /// A Result containing either the initialized engine or an error
     pub fn new(options: &Options) -> Result<UniquePtr<Engine>, Exception> {
         crate::ffi::load_engine(&options)
-    }
-
-    /// Get the batch dimension constraints for this engine.
-    ///
-    /// # Returns
-    /// A `BatchDims` struct containing the minimum, optimal, and maximum
-    /// batch sizes supported by this engine.
-    ///
-    /// For fixed-batch engines, all values will typically be the same.
-    /// For dynamic-batch engines, these values represent the valid range
-    /// of batch sizes that can be used.
-    pub fn get_axis_profile(self: &Engine, input_tensor_name: String, axis: usize) -> Result<BatchDims> {
-        let vs = self._get_axis_profile(input_tensor_name, axis)?;
-        BatchDims {
-            min: vs[0],
-            opt: vs[1],
-            max: vs[2],
-        }
     }
 }
 

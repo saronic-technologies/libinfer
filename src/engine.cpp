@@ -182,14 +182,14 @@ void Engine::load() {
   mTensorMetadata.reserve(mEngine->getNbIOTensors());
   
   for (int i = 0; i < mEngine->getNbIOTensors(); ++i) {
-    if (tensorType != TensorIOMode::kINPUT && tensorType != TensorIOMode::kOUTPUT) {
-      throw std::runtime_error("Error, IO Tensor is neither an input or output!");
-    }
-
     const auto tensorName = mEngine->getIOTensorName(i);
     const auto tensorType = mEngine->getTensorIOMode(tensorName);
     const auto tensorShape = mEngine->getTensorShape(tensorName);
     const auto tensorDataType = mEngine->getTensorDataType(tensorName);
+
+    if (tensorType != TensorIOMode::kINPUT && tensorType != TensorIOMode::kOUTPUT) {
+      throw std::runtime_error("Error, IO Tensor is neither an input or output!");
+    }
     
     // Store tensor metadata to avoid repeated TensorRT queries during inference
     TensorMetadata metadata;
@@ -198,7 +198,6 @@ void Engine::load() {
     metadata.dataType = tensorDataType;
     metadata.dataTypeSize = getDataTypeSize(toTensorDataType(tensorDataType));
     metadata.shape = tensorShape;
-    metadata.axisProfiles.resize(tensorShape.nbDims, nullptr);
     metadata.minShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN);
     metadata.optShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT);
     metadata.maxShape = mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX);
@@ -227,12 +226,8 @@ void Engine::load() {
         stream
       )
     );
-
-    if (tensorType == TensorIOMode::kINPUT) {
-      mInputTensorMetadata.push_back(std::move(metadata));
-    } else if (tensorType == TensorIOMode::kOUTPUT) {
-      mOutputTensorMetadata.push_back(std::move(metadata));
-    } 
+    
+    mTensorMetadata.push_back(std::move(metadata));
   }
 
   // Synchronize and destroy the cuda stream
@@ -264,7 +259,7 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
     const auto &tensorInput = *it->second;
 
     // validate input shape is valid with input size 
-    if (tensorInput.shape.size() != metadata.shape.nbDims) {
+    if (static_cast<int32_t>(tensorInput.shape.size()) != metadata.shape.nbDims) {
       throw std::runtime_error("Input tensor '" + metadata.name + 
                               "' has incorrect number of dimensions: " + 
                               std::to_string(tensorInput.shape.size()) + 
@@ -272,7 +267,7 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
     }
 
     size_t inputShapeSize = 1;
-    for (int j = 0; j < tensorInput.shape.size(); ++j) {
+    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
       if (tensorInput.shape[j] < 1) {
         throw std::runtime_error(
                                 "Invalid dimension size in input tensor '" + metadata.name + "'" + 
@@ -314,9 +309,10 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
     }
     
     // set input shape from tensor input shape
-    const nvinfer1:: Dims inputDims = nvinfer1::Dims{static_cast<int>(tensorInput.shape.size()), {}};
-    for (int j = 0; j < inputDims.nbDims; ++j) {
-      inputDims.d[j] = static_cast<int>(tensorInput.shape[j]);
+    nvinfer1:: Dims inputDims = nvinfer1::Dims{};
+    inputDims.nbDims = static_cast<int32_t>(tensorInput.shape.size());
+    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
+      inputDims.d[j] = tensorInput.shape[j];
     }
 
     bool shapeStatus = mContext->setInputShape(metadata.name.c_str(), inputDims);
@@ -342,6 +338,29 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
       throw std::runtime_error("Unable to set tensor address for: " + mTensorMetadata[i].name);
     }
   }
+
+  // Get output tensor names from metadata
+  char const** outputNames;
+  int32_t numNames = 0;
+  for (const auto &metadata : mTensorMetadata) {
+    if (metadata.ioMode == TensorIOMode::kOUTPUT) {
+      numNames++;
+    }
+  }
+
+  outputNames = new char const*[numNames];
+  int32_t outputIdx = 0;
+  for (const auto &metadata : mTensorMetadata) {
+    if (metadata.ioMode == TensorIOMode::kOUTPUT) {
+      outputNames[outputIdx] = metadata.name.c_str();
+      outputIdx++;
+    }
+  }
+
+  // verify output shapes
+  if (!mContext->inferShapes(numNames, outputNames)) {
+    throw std::runtime_error("Shape inference failed");
+  }
   
   // Run inference
   bool status = mContext->enqueueV3(mInferenceCudaStream);
@@ -359,24 +378,16 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
       continue; // skip if not tensor output
     }
     
-    // Find the output length for this tensor
-    size_t outputIdx = 0; // Need to map from tensor index to output index
-    for (int j = 0; j < i; ++j) {
-      if (mTensorMetadata[j].ioMode == TensorIOMode::kOUTPUT) {
-        outputIdx++;
-      }
-    }
+    const Dims inferenceOutputShape = mContext->getTensorShape(metadata.name.c_str());
     
-    const Dims outputShape = mContext->getBindingDimensions(outputIdx);
-    output.shape = std::vector<INT64>();
-    const auto outputLen = metadata.dataTypeSize; // start with data type size
-    for (int j = 0; j < outputShape.nbDims; ++j) {
-      outputLen *= outputShape.d[j];
-      output.shape.push_back(static_cast<INT64>(outputShape.d[j]));
+    TensorInstance output;
+    size_t outputLen = metadata.dataTypeSize; // start with data type size
+    for (int j = 0; j < inferenceOutputShape.nbDims; ++j) {
+      outputLen *= inferenceOutputShape.d[j];
+      output.shape.push_back(static_cast<int64_t>(inferenceOutputShape.d[j]));
     }
     
     // Create output tensor
-    TensorInstance output;
     output.name = metadata.name;
     output.dtype = toTensorDataType(metadata.dataType);
     resize(output.data, outputLen);
@@ -384,7 +395,7 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
     // Copy data from GPU buffer
     checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
                                       static_cast<char*>(mBuffers[i]),
-                                      copySize, 
+                                      outputLen, 
                                       cudaMemcpyDeviceToHost, mInferenceCudaStream));
     
     outputs.push_back(std::move(output));
