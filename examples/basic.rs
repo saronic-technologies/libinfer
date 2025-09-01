@@ -74,6 +74,9 @@ fn main() {
     info!("Input tensors:");
     for input_info in &input_infos {
         info!("  '{}': {:?} {:?}", input_info.name, input_info.shape, input_info.dtype);
+        info!("    Min shape: {:?}", input_info.min_shape);
+        info!("    Opt shape: {:?}", input_info.opt_shape);
+        info!("    Max shape: {:?}", input_info.max_shape);
     }
     
     // Print detailed information for all output tensors

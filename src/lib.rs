@@ -65,6 +65,9 @@ pub mod ffi {
         name: String,
         shape: Vec<i64>, // -1 for dynamic dimensions
         dtype: TensorDataType,
+        min_shape: Vec<i64>, // min shape for dynamic dims
+        opt_shape: Vec<i64>, // opt shape for dynamic dims
+        max_shape: Vec<i64>, // max shape for dynamic dims
     }
 
     #[derive(Debug, Clone)]
