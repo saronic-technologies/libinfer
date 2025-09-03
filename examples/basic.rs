@@ -15,7 +15,7 @@
 //! - To create engine files, use the TensorRT Python API or trtexec command-line tool
 
 use clap::Parser;
-use libinfer::{Engine, InputDataType, Options};
+use libinfer::{Engine, TensorDataType, Options};
 use libinfer::ffi::InputTensor;
 use std::path::PathBuf;
 use tracing::{info, error, Level};
@@ -62,41 +62,46 @@ fn main() {
         std::process::exit(1);
     });
 
+    let input_infos = engine.get_input_dims();
+    let output_infos = engine.get_output_dims();
+
     // Print model information
     info!("Engine loaded successfully");
-    info!("Number of inputs: {}", engine.get_num_inputs());
-    info!("Number of outputs: {}", engine.get_num_outputs());
+    info!("Number of inputs: {}", input_infos.len());
+    info!("Number of outputs: {}", output_infos.len());
     info!("Batch dimensions: {:?}", engine.get_batch_dims());
-    info!("Input data type: {:?}", engine.get_input_data_type());
     
     // Print detailed information for all input tensors
-    let input_dims = engine.get_input_dims();
     info!("Input tensors:");
-    for input_info in &input_dims {
-        info!("  '{}': {:?}", input_info.name, input_info.dims);
+    for input_info in &input_infos {
+        info!("  '{}': {:?} {:?}", input_info.name, input_info.dims, input_info.dtype);
     }
     
     // Print detailed information for all output tensors
-    let output_dims = engine.get_output_dims();
     info!("Output tensors:");
-    for output_info in &output_dims {
-        info!("  '{}': {:?}", output_info.name, output_info.dims);
+    for output_info in &output_infos {
+        info!("  '{}': {:?} {:?}", output_info.name, output_info.dims, output_info.dtype);
     }
 
     // Create input tensors for all inputs
     let mut input_tensors = Vec::new();
     
-    for input_info in &input_dims {
+    for input_info in &input_infos {
         // Calculate tensor size from dimensions
         let input_size = input_info.dims.iter().fold(1, |acc, &e| acc * e as usize);
 
         // Create appropriate input data based on data type
-        let input_data = match engine.get_input_data_type() {
-            InputDataType::UINT8 => vec![0u8; input_size],
-            InputDataType::FP32 => {
+        let input_data = match input_info.dtype {
+            TensorDataType::UINT8 => vec![0u8; input_size],
+            TensorDataType::FP32 => {
                 // For FP32, we need 4 bytes per element
                 vec![0u8; input_size * 4]
             }
+            TensorDataType::INT64 => {
+                // For INT64, we need 8 bytes per element
+                vec![0u8; input_size * 8]
+            }
+            TensorDataType::BOOL => vec![0u8; input_size],
             _ => {
                 error!("Unsupported input data type");
                 std::process::exit(1);
@@ -106,6 +111,7 @@ fn main() {
         input_tensors.push(InputTensor {
             name: input_info.name.clone(),
             data: input_data,
+            dtype: input_info.dtype.clone(),
         });
     }
 
@@ -125,7 +131,7 @@ fn main() {
                     // Print output information on first iteration
                     info!("Inference successful! Output tensors:");
                     for output in &outputs {
-                        info!("  '{}': {} elements", output.name, output.data.len());
+                        info!("  '{}' type {:?} : {} elements", output.name, output.dtype, output.data.len());
                     }
                 }
             }

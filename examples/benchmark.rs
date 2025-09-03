@@ -20,7 +20,7 @@
 
 use clap::Parser;
 use cxx::UniquePtr;
-use libinfer::{Engine, InputDataType, Options};
+use libinfer::{Engine, TensorDataType, Options};
 use libinfer::ffi::InputTensor;
 use std::{
     iter::repeat,
@@ -44,46 +44,67 @@ struct Args {
 fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let input_dims = engine.get_input_dims();
     let batch_size = engine.get_batch_dims().opt; // Use optimal batch size from engine
-    let input_len = if !input_dims.is_empty() {
-        input_dims[0].dims.iter().fold(1, |acc, &e| acc * e as usize) * batch_size as usize
-    } else {
-        0
-    };
-    let dtype = engine.get_input_data_type();
-    let input_names = engine.get_input_names();
     
-    let input_data: Vec<u8> = match dtype {
-        InputDataType::UINT8 => repeat(0).take(input_len).collect(),
-        InputDataType::FP32 => repeat(0).take(4 * input_len).collect(),
-        _ => {
-            error!("Unsupported input data type");
-            std::process::exit(1);
-        },
-    };
+    // Create input tensors for all inputs with per-tensor data types
+    let input_tensors: Vec<InputTensor> = input_dims.iter().map(|input_info| {
+        info!("Input tensor '{}' has dims {:?} and dtype {:?}", input_info.name, input_info.dims, input_info.dtype);
 
-    // Create input tensors for all inputs
-    let input_tensors: Vec<InputTensor> = input_names.iter().map(|name| {
-        InputTensor {
-            name: name.clone(),
-            data: input_data.clone(),
-        }
+        let input_len = input_info.dims.iter().fold(1, |acc, &e| acc * e as usize) * batch_size as usize;
+        
+        let input_data: Vec<u8> = match input_info.dtype {
+            TensorDataType::UINT8 => repeat(0).take(input_len).collect(),
+            TensorDataType::FP32 => repeat(0).take(4 * input_len).collect(),
+            TensorDataType::INT64 => repeat(0).take(8 * input_len).collect(),
+            TensorDataType::BOOL => repeat(0).take(input_len).collect(),
+            _ => {
+                error!("Unsupported input data type");
+                std::process::exit(1);
+            },
+        };
+
+        let input = InputTensor {
+            name: input_info.name.clone(),
+            data: input_data,
+            dtype: input_info.dtype.clone(),
+        };
+        
+        info!("Created input tensor '{}' with {} elements (dtype: {:?})", input.name, input.data.len(), input.dtype);
+
+        input
     }).collect();
 
     // Warmup.
     info!("Warming up inference codepath...");
-    for _ in 0..1024 {
+    for i in 0..1024 {
         let _output = engine.pin_mut().infer(&input_tensors).unwrap();
+        if i % 100 == 0 && i > 0 {
+            info!("Warmup progress: {}/1024", i);
+        }
     }
 
     // Measure.
     info!("Beginning {num_runs} inference runs...");
-    let latencies = (0..num_runs)
-        .map(|_| {
-            let start = Instant::now();
-            let _output = engine.pin_mut().infer(&input_tensors).unwrap();
-            start.elapsed()
-        })
-        .collect::<Vec<Duration>>();
+    let mut latencies = Vec::new();
+    let mut total_time = Duration::ZERO;
+    
+    for i in 0..num_runs {
+        let start = Instant::now();
+        let _output = engine.pin_mut().infer(&input_tensors).unwrap();
+        let elapsed = start.elapsed();
+        latencies.push(elapsed);
+        total_time += elapsed;
+        
+        // Progress logging every 10% or every 1000 iterations, whichever is more frequent
+        let progress_interval = std::cmp::min(num_runs / 10, 1000).max(1);
+        if i % progress_interval == 0 && i > 0 {
+            let avg_latency = total_time.as_secs_f32() / i as f32;
+            let remaining_runs = num_runs - i;
+            let eta_seconds = avg_latency * remaining_runs as f32;
+            info!("Progress: {}/{} runs ({:.1}%), avg latency: {:.3}ms, ETA: {:.1}s", 
+                  i, num_runs, (i as f32 / num_runs as f32) * 100.0,
+                  avg_latency * 1000.0, eta_seconds);
+        }
+    }
 
     let total_latency = latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>();
     let average_batch_latency = total_latency / latencies.len() as f32;
@@ -125,7 +146,10 @@ fn main() {
             }
         };
 
-        info!("Input data type: {:?}", engine.get_input_data_type());
+        let input_dims = engine.get_input_dims();
+        if !input_dims.is_empty() {
+            info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
+        }
         benchmark_inference(&mut engine, args.iterations);
         return;
     }
@@ -150,7 +174,10 @@ fn main() {
         }
     };
 
-    info!("Input data type: {:?}", b1_engine.get_input_data_type());
+    let input_dims = b1_engine.get_input_dims();
+    if !input_dims.is_empty() {
+        info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
+    }
     info!("\nRunning benchmark for batch size 1");
     benchmark_inference(&mut b1_engine, args.iterations);
 

@@ -47,11 +47,15 @@ pub mod ffi {
 
     #[derive(Debug, Clone)]
     /// What input data type this network accepts.
-    enum InputDataType {
+    enum TensorDataType {
         /// 8-bit unsigned integer input type
         UINT8,
         /// 32-bit floating point input type
         FP32,
+        /// 64-bit integer input type
+        INT64,
+        /// 8-bit boolean input type
+        BOOL,
     }
 
 
@@ -60,6 +64,7 @@ pub mod ffi {
     struct TensorInfo {
         name: String,
         dims: Vec<u32>,
+        dtype: TensorDataType,
     }
 
     #[derive(Debug, Clone)]
@@ -67,13 +72,15 @@ pub mod ffi {
     struct InputTensor {
         name: String,
         data: Vec<u8>,
+        dtype: TensorDataType,
     }
     
     #[derive(Debug, Clone)]
     /// Tensor output class
     struct OutputTensor {
         name: String,
-        data: Vec<f32>,
+        data: Vec<u8>,
+        dtype: TensorDataType,
     }
 
     #[derive(Debug, Clone)]
@@ -125,18 +132,6 @@ pub mod ffi {
         /// multiplying all elements of `get_output_dims`.
         fn get_output_len(self: &Engine) -> u32;
 
-        /// Returns the input data type expected by this engine.
-        ///
-        /// # Returns
-        /// The input data type (UINT8 or FP32) that this model expects.
-        fn get_input_data_type(self: &Engine) -> InputDataType;
-
-        /// Get the names of all input tensors.
-        fn get_input_names(self: &Engine) -> Vec<String>;
-
-        /// Get the names of all output tensors.
-        fn get_output_names(self: &Engine) -> Vec<String>;
-
         /// Get the number of input tensors.
         fn get_num_inputs(self: &Engine) -> usize;
 
@@ -168,7 +163,7 @@ pub mod ffi {
 // Primary exports
 pub use crate::ffi::{
     Engine,
-    InputDataType,
+    TensorDataType,
     Options,
     TensorInfo,
     InputTensor,

@@ -15,7 +15,7 @@ struct Options;
 struct TensorInfo;
 struct InputTensor;
 struct OutputTensor;
-enum class InputDataType : uint8_t;
+enum class TensorDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
 public:
@@ -93,26 +93,30 @@ public:
 
   uint32_t get_output_len() const { return mOutputLengths.empty() ? 0 : mOutputLengths[0]; }
 
-  InputDataType get_input_data_type() const { return mInputDataType; }
-
   // New methods for multi-tensor support
-  rust::Vec<rust::String> get_input_names() const;
-  rust::Vec<rust::String> get_output_names() const;
   size_t get_num_inputs() const;
   size_t get_num_outputs() const;
 
 private:
+  // Tensor metadata stored at construction time
+  struct TensorMetadata {
+    std::string name;
+    nvinfer1::TensorIOMode ioMode;
+    nvinfer1::DataType dataType;
+    size_t dataTypeSize;
+    nvinfer1::Dims dims;
+  };
+
   // Holds pointers to the input and output GPU buffers
   std::vector<void *> mBuffers;
   std::vector<uint32_t> mOutputLengths{};
   std::vector<nvinfer1::Dims> mInputDims;
   std::vector<nvinfer1::Dims> mOutputDims;
   std::vector<std::string> mIOTensorNames;
+  std::vector<TensorMetadata> mTensorMetadata; // Cached tensor metadata
   int32_t mMinBatchSize;
   int32_t mOptBatchSize;
   int32_t mMaxBatchSize;
-  InputDataType mInputDataType;
-  uint8_t mInputDataTypeSize;
 
   // Must keep IRuntime around for inference, see:
   // https://forums.developer.nvidia.com/t/is-it-safe-to-deallocate-nvinfer1-iruntime-after-creating-an-nvinfer1-icudaengine-but-before-running-inference-with-said-icudaengine/255381/2?u=cyruspk4w6

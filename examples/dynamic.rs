@@ -21,7 +21,7 @@
 //!   ```
 
 use clap::Parser;
-use libinfer::{Engine, InputDataType, Options};
+use libinfer::{Engine, TensorDataType, Options};
 use libinfer::ffi::InputTensor;
 use std::{path::PathBuf, time::Instant};
 use tracing::{info, warn, error, Level};
@@ -64,18 +64,16 @@ fn main() {
         std::process::exit(1);
     });
 
-    // Print model information
+    let input_infos = engine.get_input_dims();
+    let output_infos = engine.get_output_dims();
     let batch_dims = engine.get_batch_dims();
+
+    // Print model information
     info!("Engine loaded successfully");
-    info!("Number of inputs: {}", engine.get_num_inputs());
-    info!("Number of outputs: {}", engine.get_num_outputs());
-    info!("Input names: {:?}", engine.get_input_names());
-    info!("Output names: {:?}", engine.get_output_names());
-    info!("Input dimensions: {:?}", engine.get_input_dims());
-    info!("Output dimensions: {:?}", engine.get_output_dims());
+    info!("Number of inputs: {}", input_infos.len());
+    info!("Number of outputs: {}", output_infos.len());
     info!("Batch dimensions: min={}, optimal={}, max={}",
          batch_dims.min, batch_dims.opt, batch_dims.max);
-    info!("Input data type: {:?}", engine.get_input_data_type());
 
     // Check if this engine truly supports dynamic batch sizes
     if batch_dims.min == batch_dims.max {
@@ -84,15 +82,6 @@ fn main() {
         warn!("To test dynamic batching, you need an engine built with dynamic shapes.");
         return;
     }
-
-    // Create input data based on input dimensions and data type
-    let input_dims = engine.get_input_dims();
-    let input_size_per_item = if !input_dims.is_empty() {
-        input_dims[0].dims.iter().fold(1, |acc, &e| acc * e as usize)
-    } else {
-        0
-    };
-    let input_names = engine.get_input_names();
 
     // Test different batch sizes within the supported range
     let batch_sizes_to_test = [
@@ -104,31 +93,33 @@ fn main() {
     for &batch_size in &batch_sizes_to_test {
         info!("\nTesting batch size: {}", batch_size);
 
-        // Create input with the current batch size
-        let total_elements = input_size_per_item * batch_size as usize;
-
-        // Create appropriate input based on data type
-        let input_data = match engine.get_input_data_type() {
-            InputDataType::UINT8 => vec![0u8; total_elements],
-            InputDataType::FP32 => {
-                // For FP32, we need 4 bytes per element
-                vec![0u8; total_elements * 4]
-            }
-            _ => {
-                error!("Unsupported input data type");
-                std::process::exit(1);
-            }
-        };
-
         // Create input tensors for all inputs
-        let input_tensors: Vec<InputTensor> = input_names.iter().map(|name| {
+        let input_tensors: Vec<InputTensor> = input_infos.iter().map(|info| {
+            let dtype_size = match info.dtype {
+                TensorDataType::UINT8 => 1,
+                TensorDataType::FP32 => 4,
+                TensorDataType::INT64 => 8,
+                TensorDataType::BOOL => 1,
+                _ => {
+                    error!("Unsupported data type: {:?}", info.dtype);
+                    1 // Default to 1 byte to avoid panic
+                }
+            };
+
+            let elem_count = if !input_infos.is_empty() {
+                info.dims.iter().fold(1, |acc, &e| acc * e as usize)
+            } else {
+                0
+            };
+
             InputTensor {
-                name: name.clone(),
-                data: input_data.clone(),
+                name: info.name.clone(),
+                data: vec![0u8; elem_count * dtype_size * batch_size as usize],
+                dtype: info.dtype.clone(),
             }
         }).collect();
 
-        info!("Input size: {} elements", total_elements);
+        info!("Total input size across all tensors: {} bytes", input_tensors.iter().map(|t| t.data.len()).sum::<usize>());
 
         // Warmup
         for _ in 0..5 {
