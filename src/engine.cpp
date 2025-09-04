@@ -389,6 +389,7 @@ rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) 
                                 std::to_string(tensorInput.shape[j]) + 
                                 " > " + std::to_string(metadata.maxShape.d[j]));
       }
+
       
       inputShapeSize *= tensorInput.shape[j];
     }

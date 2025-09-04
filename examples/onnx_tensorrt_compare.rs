@@ -674,7 +674,14 @@ fn main() -> Result<()> {
     // Check if we have any input tensors
     if input_dims.is_empty() {
         return Err(anyhow!("No input tensors found in TensorRT engine"));
-    }
+    } else if input_dims.iter().all(|tensor| tensor.dtype == input_dims[0].dtype) {
+        input_dims[0].dtype.clone()
+    } else {
+        return Err(anyhow!(
+            "Mixed input data types are not yet supported in comparison mode. Found types: {:?}",
+            input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>()
+        ));
+    };
     
     // Log input tensor information
     info!("Input tensor types: {:?}", 
