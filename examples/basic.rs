@@ -15,8 +15,7 @@
 //! - To create engine files, use the TensorRT Python API or trtexec command-line tool
 
 use clap::Parser;
-use libinfer::{Engine, TensorDataType, Options};
-use libinfer::ffi::InputTensor;
+use libinfer::{Engine, TensorDataType, Options, TensorInstance};
 use std::path::PathBuf;
 use tracing::{info, error, Level};
 use tracing_subscriber::{FmtSubscriber, EnvFilter};
@@ -62,33 +61,40 @@ fn main() {
         std::process::exit(1);
     });
 
-    let input_infos = engine.get_input_dims();
-    let output_infos = engine.get_output_dims();
+    let input_infos = engine.get_input_tensor_info();
+    let output_infos = engine.get_output_tensor_info();
 
     // Print model information
     info!("Engine loaded successfully");
     info!("Number of inputs: {}", input_infos.len());
     info!("Number of outputs: {}", output_infos.len());
-    info!("Batch dimensions: {:?}", engine.get_batch_dims());
+    info!("Engine supports dynamic shapes");
     
     // Print detailed information for all input tensors
     info!("Input tensors:");
     for input_info in &input_infos {
-        info!("  '{}': {:?} {:?}", input_info.name, input_info.dims, input_info.dtype);
+        info!("  '{}': {:?} {:?}", input_info.name, input_info.shape, input_info.dtype);
+        info!("    Min shape: {:?}", input_info.min_shape);
+        info!("    Opt shape: {:?}", input_info.opt_shape);
+        info!("    Max shape: {:?}", input_info.max_shape);
     }
     
     // Print detailed information for all output tensors
     info!("Output tensors:");
     for output_info in &output_infos {
-        info!("  '{}': {:?} {:?}", output_info.name, output_info.dims, output_info.dtype);
+        info!("  '{}': {:?} {:?}", output_info.name, output_info.shape, output_info.dtype);
     }
 
     // Create input tensors for all inputs
     let mut input_tensors = Vec::new();
     
     for input_info in &input_infos {
-        // Calculate tensor size from dimensions
-        let input_size = input_info.dims.iter().fold(1, |acc, &e| acc * e as usize);
+        // Calculate tensor size from shape use 1 for all dynamic dimensions (which are -1) 
+        let new_shape: Vec<i64> = input_info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
+        let input_size = input_info.shape.iter().fold(1, |acc, &e| {
+            let e = if e == -1 { 1 } else { e };
+            acc * e as usize
+        });
 
         // Create appropriate input data based on data type
         let input_data = match input_info.dtype {
@@ -108,9 +114,10 @@ fn main() {
             }
         };
 
-        input_tensors.push(InputTensor {
+        input_tensors.push(TensorInstance {
             name: input_info.name.clone(),
             data: input_data,
+            shape: new_shape,
             dtype: input_info.dtype.clone(),
         });
     }

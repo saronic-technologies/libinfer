@@ -8,7 +8,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use libinfer::{Engine, Options, InputTensor, TensorOutput, TensorInfo};
+//! use libinfer::{Engine, Options, TensorInstance, TensorInfo};
 //!
 //! // Create engine options
 //! let options = Options {
@@ -20,13 +20,13 @@
 //! let mut engine = Engine::new(&options).unwrap();
 //!
 //! // Get input dimensions for all tensors
-//! let input_dims: Vec<TensorInfo> = engine.get_input_dims();
+//! let input_dims: Vec<TensorInfo> = engine.get_input_tensor_info();
 //! 
 //! // Create input tensors
-//! let mut input_tensors: Vec<InputTensor> = Vec::new();
+//! let mut input_tensors: Vec<TensorInstance> = Vec::new();
 //! for tensor_info in input_dims {
 //!     let size = tensor_info.dims.iter().fold(1, |acc, &d| acc * d as usize);
-//!     let input_tensor = InputTensor {
+//!     let input_tensor = TensorInstance {
 //!         name: tensor_info.name,
 //!         tensor: vec![0u8; size],
 //!     };
@@ -34,7 +34,7 @@
 //! }
 //!
 //! // Run inference
-//! let outputs: Vec<TensorOutput> = engine.pin_mut().infer(&input_tensors).unwrap();
+//! let outputs: Vec<TensorInstance> = engine.pin_mut().infer(&input_tensors).unwrap();
 //!
 //! // Process outputs...
 //! for output in outputs {
@@ -63,23 +63,19 @@ pub mod ffi {
     /// Tensor dimension information
     struct TensorInfo {
         name: String,
-        dims: Vec<u32>,
+        shape: Vec<i64>, // -1 for dynamic dimensions
         dtype: TensorDataType,
+        min_shape: Vec<i64>, // min shape for dynamic dims
+        opt_shape: Vec<i64>, // opt shape for dynamic dims
+        max_shape: Vec<i64>, // max shape for dynamic dims
     }
 
     #[derive(Debug, Clone)]
     /// Tensor input class
-    struct InputTensor {
+    struct TensorInstance {
         name: String,
         data: Vec<u8>,
-        dtype: TensorDataType,
-    }
-    
-    #[derive(Debug, Clone)]
-    /// Tensor output class
-    struct OutputTensor {
-        name: String,
-        data: Vec<u8>,
+        shape: Vec<i64>, // this should always be positive, just i64 for convenience
         dtype: TensorDataType,
     }
 
@@ -113,30 +109,13 @@ pub mod ffi {
         ///
         /// # Returns
         /// A vector of TensorInfo containing name and dimensions for each input tensor.
-        fn get_input_dims(self: &Engine) -> Vec<TensorInfo>;
-
-        /// Return the minimum, optimized, and maximum batch dimension for this engine.
-        /// This is an internal function used by `get_batch_dims`.
-        fn _get_batch_dims(self: &Engine) -> Vec<u32>;
+        fn get_input_tensor_info(self: &Engine) -> Vec<TensorInfo>;
 
         /// Return output dimensions of all output tensors, not including batch dimension.
         ///
         /// # Returns
         /// A vector of TensorInfo containing name and dimensions for each output tensor.
-        fn get_output_dims(self: &Engine) -> Vec<TensorInfo>;
-
-        /// Return the expected length of the output feature vector.
-        ///
-        /// # Returns
-        /// The total number of elements in the output tensor, equivalent to
-        /// multiplying all elements of `get_output_dims`.
-        fn get_output_len(self: &Engine) -> u32;
-
-        /// Get the number of input tensors.
-        fn get_num_inputs(self: &Engine) -> usize;
-
-        /// Get the number of output tensors.
-        fn get_num_outputs(self: &Engine) -> usize;
+        fn get_output_tensor_info(self: &Engine) -> Vec<TensorInfo>;
 
         /// Run inference on an input batch.
         ///
@@ -147,16 +126,10 @@ pub mod ffi {
         /// A Result containing either the output tensor data as a vector of f32 values,
         /// or an error message if inference failed.
         ///
-        /// # Details
-        /// The input batch dimension is dependent on whether the engine has been built with fixed
-        /// or dynamic input batch sizes. If fixed, the input batch dimensions
-        /// must match the value returned by `get_input_dims`. Dynamic may accept any input batch size
-        /// within the range specified by `get_batch_dims`.
-        ///
         /// The input vector must be a flattened representation of shape
-        /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
-        /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
+        /// `get_input_tensor_info` with appropriate dynamic dimensions. Likewise, the output dimension will
+        /// be of shape `get_output_tensor_info`.
+        fn infer(self: Pin<&mut Engine>, input: &Vec<TensorInstance>) -> Result<Vec<TensorInstance>>;
     }
 }
 
@@ -166,8 +139,7 @@ pub use crate::ffi::{
     TensorDataType,
     Options,
     TensorInfo,
-    InputTensor,
-    OutputTensor,
+    TensorInstance,
 };
 
 use cxx::{Exception, UniquePtr};
@@ -193,24 +165,6 @@ impl Engine {
     /// A Result containing either the initialized engine or an error
     pub fn new(options: &Options) -> Result<UniquePtr<Engine>, Exception> {
         crate::ffi::load_engine(&options)
-    }
-
-    /// Get the batch dimension constraints for this engine.
-    ///
-    /// # Returns
-    /// A `BatchDims` struct containing the minimum, optimal, and maximum
-    /// batch sizes supported by this engine.
-    ///
-    /// For fixed-batch engines, all values will typically be the same.
-    /// For dynamic-batch engines, these values represent the valid range
-    /// of batch sizes that can be used.
-    pub fn get_batch_dims(self: &Engine) -> BatchDims {
-        let vs = self._get_batch_dims();
-        BatchDims {
-            min: vs[0],
-            opt: vs[1],
-            max: vs[2],
-        }
     }
 }
 
