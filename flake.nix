@@ -1,10 +1,11 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     jetpack-nixos.url = "github:anduril/jetpack-nixos";
   };
-  outputs = { nixpkgs, flake-utils, jetpack-nixos, ... }:
+  outputs = { nixpkgs, nixpkgs-unstable, flake-utils, jetpack-nixos, ... }:
     let
       supported-systems = with flake-utils.lib.system; [
         x86_64-linux
@@ -17,45 +18,51 @@
           inherit system; 
           config.allowUnfree = true;
         };
-        cudaPackages = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages else pkgs.cudaPackages;
-        tensorrt = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages.tensorrt else pkgs.cudaPackages.tensorrt;
+
+        pkgs-unstable = import nixpkgs-unstable { 
+          inherit system; 
+          config.allowUnfree = true;
+        };
+
+        cudaPackages = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages else pkgs-unstable.cudaPackages;
+        tensorrt = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages.tensorrt else pkgs-unstable.cudaPackages.tensorrt;
         l4t-cuda = jetpack-nixos.legacyPackages.aarch64-linux.l4t-cuda;
         inherit (cudaPackages) cudatoolkit cudnn cuda_cudart;
 
-        inputs = with pkgs; [
-          bacon
-          cmake
-          cmake-format
-          clang
-          clang-tools
-          linuxHeaders
-          llvmPackages.compiler-rt
-          nixpkgs-fmt
-          openssl
-          pkg-config
+        inputs = [
+          pkgs.bacon
+          pkgs.cmake
+          pkgs.cmake-format
+          pkgs.clang
+          pkgs.clang-tools
+          pkgs.linuxHeaders
+          pkgs.llvmPackages.compiler-rt
+          pkgs.nixpkgs-fmt
+          pkgs.openssl
+          pkgs.pkg-config
           cudatoolkit
           tensorrt
-          rustc
-          cargo
-          rustfmt
-          spdlog
-          fmt
-          cxx-rs
+          pkgs.rustc
+          pkgs.cargo
+          pkgs.rustfmt
+          pkgs.spdlog
+          pkgs.fmt
+          pkgs.cxx-rs
         ];
 
-        libs = pkgs.lib.makeLibraryPath (with pkgs; [
-          addDriverRunpath.driverLink
-          stdenv.cc.cc.lib
+        libs = pkgs.lib.makeLibraryPath [
+          pkgs.addDriverRunpath.driverLink
+          pkgs.stdenv.cc.cc.lib
           cudaPackages.cudatoolkit
           cudaPackages.cuda_nvrtc
-          libGL
-          glib
-          glibc
-          zlib
+          pkgs.libGL
+          pkgs.glib
+          pkgs.glibc
+          pkgs.zlib
           tensorrt.lib
           cudnn
           cuda_cudart
-        ]);
+        ];
       in
       {
         devShells = {
