@@ -20,8 +20,7 @@
 
 use clap::Parser;
 use cxx::UniquePtr;
-use libinfer::{Engine, TensorDataType, Options};
-use libinfer::ffi::InputTensor;
+use libinfer::{Engine, TensorDataType, Options, TensorInstance};
 use std::{
     iter::repeat,
     path::PathBuf,
@@ -42,15 +41,19 @@ struct Args {
 }
 
 fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
-    let input_dims = engine.get_input_dims();
-    let batch_size = engine.get_batch_dims().opt; // Use optimal batch size from engine
+    let input_dims = engine.get_input_tensor_info();
     
     // Create input tensors for all inputs with per-tensor data types
-    let input_tensors: Vec<InputTensor> = input_dims.iter().map(|input_info| {
-        info!("Input tensor '{}' has dims {:?} and dtype {:?}", input_info.name, input_info.dims, input_info.dtype);
+    let input_tensors: Vec<TensorInstance> = input_dims.iter().map(|input_info| {
+        info!("Input tensor '{}' has shape {:?} and dtype {:?}", input_info.name, input_info.shape, input_info.dtype);
 
-        let input_len = input_info.dims.iter().fold(1, |acc, &e| acc * e as usize) * batch_size as usize;
-        
+        // Calculate tensor size from shape use 1 for all dynamic dimensions (which are -1) 
+        let new_shape: Vec<i64> = input_info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
+        let input_len = input_info.shape.iter().fold(1, |acc, &e| {
+            let e = if e == -1 { 1 } else { e };
+            acc * e as usize
+        });        
+
         let input_data: Vec<u8> = match input_info.dtype {
             TensorDataType::UINT8 => repeat(0).take(input_len).collect(),
             TensorDataType::FP32 => repeat(0).take(4 * input_len).collect(),
@@ -62,9 +65,10 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
             },
         };
 
-        let input = InputTensor {
+        let input = TensorInstance {
             name: input_info.name.clone(),
             data: input_data,
+            shape: new_shape,
             dtype: input_info.dtype.clone(),
         };
         
@@ -109,13 +113,9 @@ fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
     let total_latency = latencies.iter().map(|t| t.as_secs_f32()).sum::<f32>();
     let average_batch_latency = total_latency / latencies.len() as f32;
     let average_batch_framerate = 1.0 / average_batch_latency;
-    let average_frame_latency = total_latency / (latencies.len() as f32 * batch_size as f32);
-    let average_frame_framerate = 1.0 / average_frame_latency;
 
     info!("inference calls    : {}", num_runs);
     info!("total latency      : {}", total_latency);
-    info!("avg. frame latency : {}", average_frame_latency);
-    info!("avg. frame fps     : {}", average_frame_framerate);
     info!("avg. batch latency : {}", average_batch_latency);
     info!("avg. batch fps     : {}", average_batch_framerate);
 }
@@ -146,7 +146,7 @@ fn main() {
             }
         };
 
-        let input_dims = engine.get_input_dims();
+        let input_dims = engine.get_input_tensor_info();
         if !input_dims.is_empty() {
             info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
         }
@@ -174,7 +174,7 @@ fn main() {
         }
     };
 
-    let input_dims = b1_engine.get_input_dims();
+    let input_dims = b1_engine.get_input_tensor_info();
     if !input_dims.is_empty() {
         info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
     }
