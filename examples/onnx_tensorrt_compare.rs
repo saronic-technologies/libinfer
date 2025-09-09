@@ -328,15 +328,10 @@ fn run_tensorrt_inference(
     input_data_list: &[Vec<u8>],
     input_infos: &[libinfer::TensorInfo],
 ) -> Result<Vec<Vec<f32>>> {
-    info!("Info data list len {}", input_data_list.len());
     // Create input tensors for all inputs
     let mut input_tensors = Vec::new();
     for (i, input_data) in input_data_list.iter().enumerate() {
         let input_info = &input_infos[i];
-        
-        // Debug: Log tensor info
-        info!("TensorRT Input {}: name='{}', shape={:?}, data_len={}", 
-              i, input_info.name, input_info.shape, input_data.len());
         
         let new_shape: Vec<i64> = input_info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
         
