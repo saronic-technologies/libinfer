@@ -15,6 +15,7 @@
 struct Options;
 struct TensorInfo;
 struct TensorInstance;
+struct DeviceTensor;
 enum class TensorDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
@@ -76,6 +77,9 @@ public:
 
   // Run inference and return output tensors.
   rust::Vec<TensorInstance> infer(const rust::Vec<TensorInstance> &input);
+
+  // Run inference on device-resident tensors (zero-copy).
+  void infer_device(const rust::Vec<DeviceTensor> &input, rust::Vec<DeviceTensor> &output);
 
   // Get dimensions for all input tensors
   rust::Vec<TensorInfo> get_input_tensor_info() const;

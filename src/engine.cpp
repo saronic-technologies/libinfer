@@ -563,3 +563,139 @@ rust::Vec<TensorInfo> Engine::get_output_tensor_info() const {
   }
   return result;
 }
+
+void Engine::infer_device(const rust::Vec<DeviceTensor> &input, rust::Vec<DeviceTensor> &output) {
+  // Create a map from tensor name to device tensor for easy lookup
+  std::unordered_map<std::string, const DeviceTensor*> inputMap;
+  for (const auto &tensorInput : input) {
+    inputMap[std::string(tensorInput.name)] = &tensorInput;
+  }
+  
+  // Process each input tensor using cached metadata
+  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
+    const auto &metadata = mTensorMetadata[i];
+    
+    if (metadata.ioMode != TensorIOMode::kINPUT) {
+      continue; // If not a tensor input skip
+    }
+    
+    // Find the corresponding input data
+    auto it = inputMap.find(metadata.name);
+    if (it == inputMap.end()) {
+      throw std::runtime_error("Missing input tensor: " + metadata.name);
+    }
+    
+    const auto &tensorInput = *it->second;
+
+    // Validate shape dimensions match
+    if (static_cast<int32_t>(tensorInput.shape.size()) != metadata.shape.nbDims) {
+      throw std::runtime_error("Input tensor '" + metadata.name + 
+                              "' has incorrect number of dimensions: " + 
+                              std::to_string(tensorInput.shape.size()) + 
+                              ", expected: " + std::to_string(metadata.shape.nbDims));
+    }
+
+    // Validate shape bounds
+    size_t inputShapeSize = 1;
+    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
+      if (tensorInput.shape[j] < metadata.minShape.d[j] || 
+          tensorInput.shape[j] > metadata.maxShape.d[j]) {
+        throw std::runtime_error("Input tensor '" + metadata.name + 
+                                "' dimension " + std::to_string(j) + 
+                                " out of bounds: " + std::to_string(tensorInput.shape[j]));
+      }
+      inputShapeSize *= tensorInput.shape[j];
+    }
+    inputShapeSize *= metadata.dataTypeSize;
+
+    // Validate buffer size
+    if (inputShapeSize != tensorInput.size_bytes) {
+      throw std::runtime_error("Input tensor '" + metadata.name + 
+                              "' size mismatch: " + std::to_string(inputShapeSize) + 
+                              " != " + std::to_string(tensorInput.size_bytes));
+    }
+    
+    // Set input shape from tensor
+    nvinfer1::Dims inputDims = nvinfer1::Dims{};
+    inputDims.nbDims = static_cast<int32_t>(tensorInput.shape.size());
+    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
+      inputDims.d[j] = tensorInput.shape[j];
+    }
+
+    if (!mContext->setInputShape(metadata.name.c_str(), inputDims)) {
+      throw std::runtime_error("Failed to set input shape for tensor: " + metadata.name);
+    }
+  }
+  
+  // Ensure all dynamic bindings have been defined
+  if (!mContext->allInputDimensionsSpecified()) {
+    throw std::runtime_error("Error, not all required dimensions specified.");
+  }
+  
+  // Set tensor addresses - for inputs use the provided GPU pointers
+  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
+    const auto &metadata = mTensorMetadata[i];
+    
+    void* tensorAddress = nullptr;
+    
+    if (metadata.ioMode == TensorIOMode::kINPUT) {
+      // Find the input tensor
+      auto it = inputMap.find(metadata.name);
+      if (it != inputMap.end()) {
+        tensorAddress = it->second->device_ptr;
+      }
+    } else {
+      // For outputs, we need to check if pre-allocated buffers were provided
+      bool found = false;
+      for (auto &outputTensor : output) {
+        if (outputTensor.name == metadata.name) {
+          tensorAddress = outputTensor.device_ptr;
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) {
+        // Use our internal buffer if no output buffer provided
+        tensorAddress = mBuffers[metadata.bufferIndex];
+      }
+    }
+    
+    if (!tensorAddress) {
+      throw std::runtime_error("No device buffer for tensor: " + metadata.name);
+    }
+    
+    if (!mContext->setTensorAddress(metadata.name.c_str(), tensorAddress)) {
+      throw std::runtime_error("Unable to set tensor address for: " + metadata.name);
+    }
+  }
+
+  // Run inference
+  if (!mContext->enqueueV3(mInferenceCudaStream)) {
+    throw std::runtime_error("Inference execution failed");
+  }
+  
+  // Update output tensor metadata (shapes might have changed due to dynamic dims)
+  for (auto &outputTensor : output) {
+    // Find corresponding metadata
+    for (const auto &metadata : mTensorMetadata) {
+      if (metadata.ioMode == TensorIOMode::kOUTPUT && metadata.name == std::string(outputTensor.name)) {
+        // Get the actual output shape after inference
+        const Dims inferenceOutputShape = mContext->getTensorShape(metadata.name.c_str());
+        
+        // Update shape
+        outputTensor.shape.clear();
+        size_t outputSize = metadata.dataTypeSize;
+        for (int j = 0; j < inferenceOutputShape.nbDims; ++j) {
+          outputTensor.shape.push_back(static_cast<int64_t>(inferenceOutputShape.d[j]));
+          outputSize *= inferenceOutputShape.d[j];
+        }
+        outputTensor.size_bytes = outputSize;
+        break;
+      }
+    }
+  }
+  
+  // Synchronize the stream
+  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
+}

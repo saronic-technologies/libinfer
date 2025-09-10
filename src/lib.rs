@@ -21,7 +21,7 @@
 //!
 //! // Get input dimensions for all tensors
 //! let input_dims: Vec<TensorInfo> = engine.get_input_tensor_info();
-//! 
+//!
 //! // Create input tensors
 //! let mut input_tensors: Vec<TensorInstance> = Vec::new();
 //! for tensor_info in input_dims {
@@ -58,7 +58,6 @@ pub mod ffi {
         BOOL,
     }
 
-
     #[derive(Debug, Clone)]
     /// Tensor dimension information
     struct TensorInfo {
@@ -76,6 +75,15 @@ pub mod ffi {
         name: String,
         data: Vec<u8>,
         shape: Vec<i64>, // this should always be positive, just i64 for convenience
+        dtype: TensorDataType,
+    }
+
+    /// Device-resident tensor for zero-copy inference
+    struct DeviceTensor {
+        name: String,
+        device_ptr: *mut u8, // Raw device memory pointer
+        size_bytes: usize,   // Size in bytes
+        shape: Vec<i64>,
         dtype: TensorDataType,
     }
 
@@ -129,18 +137,31 @@ pub mod ffi {
         /// The input vector must be a flattened representation of shape
         /// `get_input_tensor_info` with appropriate dynamic dimensions. Likewise, the output dimension will
         /// be of shape `get_output_tensor_info`.
-        fn infer(self: Pin<&mut Engine>, input: &Vec<TensorInstance>) -> Result<Vec<TensorInstance>>;
+        fn infer(
+            self: Pin<&mut Engine>,
+            input: &Vec<TensorInstance>,
+        ) -> Result<Vec<TensorInstance>>;
+
+        /// Run inference on device-resident tensors (zero-copy).
+        ///
+        /// # Arguments
+        /// * `input` - Device tensors that already reside in device memory
+        /// * `output` - Pre-allocated device tensors for outputs
+        ///
+        /// # Returns
+        /// Ok(()) if inference succeeded, Err otherwise.
+        ///
+        /// This avoids all H2D/D2H memory copies for maximum performance.
+        fn infer_device(
+            self: Pin<&mut Engine>,
+            input: &Vec<DeviceTensor>,
+            output: &mut Vec<DeviceTensor>,
+        ) -> Result<()>;
     }
 }
 
 // Primary exports
-pub use crate::ffi::{
-    Engine,
-    TensorDataType,
-    Options,
-    TensorInfo,
-    TensorInstance,
-};
+pub use crate::ffi::{DeviceTensor, Engine, Options, TensorDataType, TensorInfo, TensorInstance};
 
 use cxx::{Exception, UniquePtr};
 
