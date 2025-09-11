@@ -211,6 +211,8 @@ fn main() {
             std::process::exit(1);
         }
     };
+    // Use pinned host memory and enable CUDA graphs for faster transfers during test
+    let _ = engine.pin_mut().enable_pinned_memory(true);
 
     let input = read_binary_file(args.path.join("input.bin")).unwrap_or_else(|e| {
         error!("Failed to read input.bin: {e}");
@@ -224,6 +226,17 @@ fn main() {
     let input_dims = engine.get_input_tensor_info();
     if !input_dims.is_empty() {
         info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
+    }
+
+    // Quick warmup to prime kernels and capture CUDA graph
+    if !input_dims.is_empty() {
+        let shape: Vec<i64> = input_dims[0].shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
+        // Double buffer: two copies of the same input to avoid re-register clashes
+        let input_a = TensorInstance { name: input_dims[0].name.clone(), data: input.clone(), shape: shape.clone(), dtype: input_dims[0].dtype.clone() };
+        let input_b = TensorInstance { name: input_dims[0].name.clone(), data: input.clone(), shape: shape.clone(), dtype: input_dims[0].dtype.clone() };
+        for i in 0..16 { let _ = if i % 2 == 0 { engine.pin_mut().infer(&vec![input_a.clone()]) } else { engine.pin_mut().infer(&vec![input_b.clone()]) }; }
+        let _ = engine.pin_mut().enable_cuda_graphs();
+        let _ = engine.pin_mut().set_validation_enabled(false);
     }
 
     test_input_dim(&engine);

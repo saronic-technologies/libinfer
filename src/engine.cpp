@@ -19,6 +19,12 @@
 
 using namespace nvinfer1;
 
+namespace {
+struct HostUnregisterPayload {
+  std::vector<void*> ptrs;
+};
+}
+
 // Helper function to convert from our enum to TensorRT's enum.
 TensorDataType toTensorDataType(DataType dt) {
   switch (dt) {
@@ -75,7 +81,14 @@ template <typename T> static void resize(rust::Vec<T> &v, size_t len) {
 }
 
 Engine::Engine(const Options &options)
-    : kEnginePath(options.path), kDeviceIndex(options.device_index) {
+    : mAsyncInferenceActive(false),
+      mUsePinnedHostMemory(true),
+      mValidateShapes(true),
+      mEventH2DComplete(nullptr),
+      mEventComputeComplete(nullptr),
+      mCudaGraph(nullptr), mCudaGraphExec(nullptr),
+      mGraphCaptured(false), mUseGraphOptimization(false),
+      kEnginePath(options.path), kDeviceIndex(options.device_index) {
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -106,7 +119,22 @@ Engine::~Engine() {
     checkCudaErrorCode(cudaFree(buffer));
   }
 
-  checkCudaErrorCode(cudaStreamDestroy(mInferenceCudaStream));
+  // Cleanup CUDA Graph resources
+  if (mCudaGraphExec != nullptr) {
+    checkCudaErrorCode(cudaGraphExecDestroy(mCudaGraphExec));
+  }
+  if (mCudaGraph != nullptr) {
+    checkCudaErrorCode(cudaGraphDestroy(mCudaGraph));
+  }
+
+  // Destroy persistent events
+  if (mEventH2DComplete != nullptr) { checkCudaErrorCode(cudaEventDestroy(mEventH2DComplete)); }
+  if (mEventComputeComplete != nullptr) { checkCudaErrorCode(cudaEventDestroy(mEventComputeComplete)); }
+
+  // Destroy all streams
+  checkCudaErrorCode(cudaStreamDestroy(mHostToDeviceStream));
+  checkCudaErrorCode(cudaStreamDestroy(mComputeStream));
+  checkCudaErrorCode(cudaStreamDestroy(mDeviceToHostStream));
 
   mBuffers.clear();
 }
@@ -170,12 +198,11 @@ void Engine::load() {
   // This will be passed to TensorRT for inference
   mBuffers.resize(mEngine->getNbIOTensors());
 
-  // Create the cuda stream that will be used for inference
-  checkCudaErrorCode(cudaStreamCreate(&mInferenceCudaStream));
+  // Setup multi-stream architecture for optimal performance
+  setupStreams();
 
-  // Create a cuda stream
-  cudaStream_t stream;
-  checkCudaErrorCode(cudaStreamCreate(&stream));
+  // Use the H2D stream for initial setup operations
+  cudaStream_t& stream = mHostToDeviceStream;
 
   // Allocate GPU memory for input and output buffers
   mTensorMetadata.clear();
@@ -329,199 +356,10 @@ void Engine::load() {
 
   // Now set metadata for output tensors
 
-  // Synchronize and destroy the cuda stream
+  // Synchronize the setup stream
   checkCudaErrorCode(cudaStreamSynchronize(stream));
-  checkCudaErrorCode(cudaStreamDestroy(stream));
 }
 
-rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) {
-  // Create a map from tensor name to input data for easy lookup
-  std::unordered_map<std::string, const TensorInstance*> inputMap;
-  for (const auto &tensorInput : input) {
-    inputMap[std::string(tensorInput.name)] = &tensorInput;
-  }
-  
-  // Process each input tensor using cached metadata
-  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
-    const auto &metadata = mTensorMetadata[i];
-    
-    if (metadata.ioMode != TensorIOMode::kINPUT) {
-      continue; // If not a tensor input skip
-    }
-    
-    // Find the corresponding input data
-    auto it = inputMap.find(metadata.name);
-    if (it == inputMap.end()) {
-      throw std::runtime_error("Missing input tensor: " + metadata.name);
-    }
-    
-    const auto &tensorInput = *it->second;
-
-    // validate input shape is valid with input size 
-    if (static_cast<int32_t>(tensorInput.shape.size()) != metadata.shape.nbDims) {
-      throw std::runtime_error("Input tensor '" + metadata.name + 
-                              "' has incorrect number of dimensions: " + 
-                              std::to_string(tensorInput.shape.size()) + 
-                              ", expected: " + std::to_string(metadata.shape.nbDims));
-    }
-
-    size_t inputShapeSize = 1;
-    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
-      if (tensorInput.shape[j] < 1) {
-        throw std::runtime_error(
-                                "Invalid dimension size in input tensor '" + metadata.name + "'" + 
-                                " at index " + std::to_string(j) + ": " + std::to_string(tensorInput.shape[j])
-        );
-      }
-
-      if (tensorInput.shape[j] < metadata.minShape.d[j]) {
-        throw std::runtime_error("Input tensor '" + metadata.name + 
-                                "' dimension " + std::to_string(j) + 
-                                " is smaller than minimum: " + 
-                                std::to_string(tensorInput.shape[j]) + 
-                                " < " + std::to_string(metadata.minShape.d[j]));
-      }
-
-      if (tensorInput.shape[j] > metadata.maxShape.d[j]) {
-        throw std::runtime_error("Input tensor '" + metadata.name + 
-                                "' dimension " + std::to_string(j) + 
-                                " is larger than maximum: " + 
-                                std::to_string(tensorInput.shape[j]) + 
-                                " > " + std::to_string(metadata.maxShape.d[j]));
-      }
-
-      
-      inputShapeSize *= tensorInput.shape[j];
-    }
-
-    inputShapeSize *= metadata.dataTypeSize; // account for data type size
-    if (inputShapeSize != tensorInput.data.size()) {
-      throw std::runtime_error("Input tensor '" + metadata.name + 
-                              "' has size mismatch calculated bytes from input tensor shape: " + 
-                              std::to_string(inputShapeSize) + 
-                              " != " + std::to_string(tensorInput.data.size()));
-    }
-    
-    // Validate input tensor size
-    if (tensorInput.data.size() % metadata.nonDynamicSize != 0) {
-      throw std::runtime_error("Input tensor '" + metadata.name + 
-                              "' does not contain whole number of non-dynamic elements");
-    }
-    
-    // set input shape from tensor input shape
-    nvinfer1:: Dims inputDims = nvinfer1::Dims{};
-    inputDims.nbDims = static_cast<int32_t>(tensorInput.shape.size());
-    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
-      inputDims.d[j] = tensorInput.shape[j];
-    }
-
-    bool shapeStatus = mContext->setInputShape(metadata.name.c_str(), inputDims);
-    if (!shapeStatus) {
-      throw std::runtime_error("Failed to set input shape for tensor: " + metadata.name);
-    }
-    
-    // Copy input data to GPU buffer
-    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[metadata.bufferIndex], tensorInput.data.data(), 
-                                      tensorInput.data.size(),
-                                      cudaMemcpyHostToDevice, mInferenceCudaStream));
-  }
-  
-  // Ensure all dynamic bindings have been defined
-  if (!mContext->allInputDimensionsSpecified()) {
-    throw std::runtime_error("Error, not all required dimensions specified.");
-  }
-  
-  // Set the address of all input and output buffers using cached names
-  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
-    // degug log the tensor names and buffer indices and buffer size
-  
-    spdlog::debug("Setting tensor address for: {}, buffer index: {}, buffer ptr: {}",
-                  mTensorMetadata[i].name, mTensorMetadata[i].bufferIndex, mBuffers[mTensorMetadata[i].bufferIndex]);
-
-    bool status = mContext->setTensorAddress(mTensorMetadata[i].name.c_str(), mBuffers[mTensorMetadata[i].bufferIndex]);
-    if (!status) {
-      throw std::runtime_error("Unable to set tensor address for: " + mTensorMetadata[i].name);
-    }
-  }
-
-  // Get output tensor names from metadata
-  char const** outputNames;
-  int32_t numNames = 0;
-  for (const auto &metadata : mTensorMetadata) {
-    if (metadata.ioMode == TensorIOMode::kOUTPUT) {
-      numNames++;
-    }
-  }
-
-  outputNames = new char const*[numNames];
-  int32_t outputIdx = 0;
-  for (const auto &metadata : mTensorMetadata) {
-    if (metadata.ioMode == TensorIOMode::kOUTPUT) {
-      outputNames[outputIdx] = metadata.name.c_str();
-      outputIdx++;
-    }
-  }
-
-  // verify output shapes
-  const int32_t error_code = mContext->inferShapes(numNames, outputNames);
-  if (error_code > 0) {
-    // create a comma separated list of output names
-    std::string namesCombined;
-    for (int i = 0; i < numNames; ++i) {
-      namesCombined += outputNames[i];
-      if (i < numNames - 1) {
-        namesCombined += ", ";
-      }
-    }
-
-    throw std::runtime_error(
-      "Failed to infer output shapes, for output names : " + std::string(namesCombined)
-      + ", " + std::to_string(error_code) + " input tensors not specified correctly.");
-  }
-  
-  // Run inference
-  bool status = mContext->enqueueV3(mInferenceCudaStream);
-  if (!status) {
-    throw std::runtime_error("Inference execution failed");
-  }
-  
-  // Collect output tensors
-  rust::Vec<TensorInstance> outputs;
-  
-  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
-    const auto &metadata = mTensorMetadata[i];
-    
-    if (metadata.ioMode != TensorIOMode::kOUTPUT) {
-      continue; // skip if not tensor output
-    }
-    
-    const Dims inferenceOutputShape = mContext->getTensorShape(metadata.name.c_str());
-    
-    TensorInstance output;
-    size_t outputLen = metadata.dataTypeSize; // start with data type size
-    for (int j = 0; j < inferenceOutputShape.nbDims; ++j) {
-      outputLen *= inferenceOutputShape.d[j];
-      output.shape.push_back(static_cast<int64_t>(inferenceOutputShape.d[j]));
-    }
-    
-    // Create output tensor
-    output.name = metadata.name;
-    output.dtype = toTensorDataType(metadata.dataType);
-    resize(output.data, outputLen);
-    
-    // Copy data from GPU buffer
-    checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
-                                      static_cast<char*>(mBuffers[metadata.bufferIndex]),
-                                      outputLen, 
-                                      cudaMemcpyDeviceToHost, mInferenceCudaStream));
-    
-    outputs.push_back(std::move(output));
-  }
-  
-  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
-  
-  return outputs;
-}
 
 rust::Vec<TensorInfo> Engine::get_input_tensor_info() const {
   rust::Vec<TensorInfo> result;
@@ -562,4 +400,363 @@ rust::Vec<TensorInfo> Engine::get_output_tensor_info() const {
     }
   }
   return result;
+}
+
+// Setup multi-stream architecture for optimal performance
+void Engine::setupStreams() {
+  // Create separate streams for different operations to enable overlap
+  checkCudaErrorCode(cudaStreamCreateWithFlags(&mHostToDeviceStream, cudaStreamNonBlocking));
+  checkCudaErrorCode(cudaStreamCreateWithFlags(&mComputeStream, cudaStreamNonBlocking));
+  checkCudaErrorCode(cudaStreamCreateWithFlags(&mDeviceToHostStream, cudaStreamNonBlocking));
+  
+  // Create reusable events (no timing) to minimize overhead
+  checkCudaErrorCode(cudaEventCreateWithFlags(&mEventH2DComplete, cudaEventDisableTiming));
+  checkCudaErrorCode(cudaEventCreateWithFlags(&mEventComputeComplete, cudaEventDisableTiming));
+  
+  spdlog::debug("Multi-stream architecture initialized: H2D={}, Compute={}, D2H={}", 
+                (void*)mHostToDeviceStream, (void*)mComputeStream, (void*)mDeviceToHostStream);
+}
+
+// Capture CUDA graph for repeated inference patterns
+void Engine::captureGraph() {
+  if (mGraphCaptured) {
+    return;
+  }
+  
+  spdlog::info("Capturing CUDA graph for optimized inference");
+  
+  // Start graph capture on the compute stream
+  checkCudaErrorCode(cudaStreamBeginCapture(mComputeStream, cudaStreamCaptureModeGlobal));
+  
+  // Execute one inference to capture the pattern
+  // Note: This assumes input shapes have been set appropriately
+  bool status = mContext->enqueueV3(mComputeStream);
+  if (!status) {
+    throw std::runtime_error("Failed to capture CUDA graph - enqueueV3 failed");
+  }
+  
+  // End capture and create executable graph
+  checkCudaErrorCode(cudaStreamEndCapture(mComputeStream, &mCudaGraph));
+  checkCudaErrorCode(cudaGraphInstantiate(&mCudaGraphExec, mCudaGraph, nullptr, nullptr, 0));
+  
+  mGraphCaptured = true;
+  spdlog::info("CUDA graph capture completed successfully");
+}
+
+// Synchronize all streams
+void Engine::synchronizeStreams() {
+  checkCudaErrorCode(cudaStreamSynchronize(mHostToDeviceStream));
+  checkCudaErrorCode(cudaStreamSynchronize(mComputeStream));
+  checkCudaErrorCode(cudaStreamSynchronize(mDeviceToHostStream));
+}
+
+// Optimized synchronous inference with multi-stream architecture
+rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) {
+  // Start async inference
+  infer_async(input);
+  // Wait for completion and return results
+  return wait_for_completion();
+}
+
+// Asynchronous inference implementation with multi-stream optimization
+void Engine::infer_async(const rust::Vec<TensorInstance> &input) {
+  if (mAsyncInferenceActive) {
+    throw std::runtime_error("Cannot start new async inference while previous one is active. Call wait_for_completion() first.");
+  }
+  
+  mAsyncInferenceActive = true;
+  
+  // Create a map from tensor name to input data for easy lookup
+  std::unordered_map<std::string, const TensorInstance*> inputMap;
+  for (const auto &tensorInput : input) {
+    inputMap[std::string(tensorInput.name)] = &tensorInput;
+  }
+  
+  HostUnregisterPayload* unregisterPayload = nullptr;
+  if (mUsePinnedHostMemory) { unregisterPayload = new HostUnregisterPayload(); }
+  
+  // Phase 1: Input validation and shape setting (CPU operations)
+  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
+    const auto &metadata = mTensorMetadata[i];
+    
+    if (metadata.ioMode != TensorIOMode::kINPUT) {
+      continue; // If not a tensor input skip
+    }
+    
+    // Find the corresponding input data
+    auto it = inputMap.find(metadata.name);
+    if (it == inputMap.end()) {
+      mAsyncInferenceActive = false;
+      throw std::runtime_error("Missing input tensor: " + metadata.name);
+    }
+    
+    const auto &tensorInput = *it->second;
+
+    // validate input shape is valid with input size 
+    if (static_cast<int32_t>(tensorInput.shape.size()) != metadata.shape.nbDims) {
+      mAsyncInferenceActive = false;
+      throw std::runtime_error("Input tensor '" + metadata.name + 
+                              "' has incorrect number of dimensions: " + 
+                              std::to_string(tensorInput.shape.size()) + 
+                              ", expected: " + std::to_string(metadata.shape.nbDims));
+    }
+
+    size_t inputShapeSize = 1;
+    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
+      if (tensorInput.shape[j] < 1) {
+        mAsyncInferenceActive = false;
+        throw std::runtime_error(
+                                "Invalid dimension size in input tensor '" + metadata.name + "'" + 
+                                " at index " + std::to_string(j) + ": " + std::to_string(tensorInput.shape[j])
+        );
+      }
+
+      if (tensorInput.shape[j] < metadata.minShape.d[j]) {
+        mAsyncInferenceActive = false;
+        throw std::runtime_error("Input tensor '" + metadata.name + 
+                                "' dimension " + std::to_string(j) + 
+                                " is smaller than minimum: " + 
+                                std::to_string(tensorInput.shape[j]) + 
+                                " < " + std::to_string(metadata.minShape.d[j]));
+      }
+
+      if (tensorInput.shape[j] > metadata.maxShape.d[j]) {
+        mAsyncInferenceActive = false;
+        throw std::runtime_error("Input tensor '" + metadata.name + 
+                                "' dimension " + std::to_string(j) + 
+                                " is larger than maximum: " + 
+                                std::to_string(tensorInput.shape[j]) + 
+                                " > " + std::to_string(metadata.maxShape.d[j]));
+      }
+      
+      inputShapeSize *= tensorInput.shape[j];
+    }
+
+    inputShapeSize *= metadata.dataTypeSize;
+    if (inputShapeSize != tensorInput.data.size()) {
+      mAsyncInferenceActive = false;
+      throw std::runtime_error("Input tensor '" + metadata.name + 
+                              "' has size mismatch calculated bytes from input tensor shape: " + 
+                              std::to_string(inputShapeSize) + 
+                              " != " + std::to_string(tensorInput.data.size()));
+    }
+    
+    // set input shape from tensor input shape
+    nvinfer1::Dims inputDims = nvinfer1::Dims{};
+    inputDims.nbDims = static_cast<int32_t>(tensorInput.shape.size());
+    for (size_t j = 0; j < tensorInput.shape.size(); ++j) {
+      inputDims.d[j] = tensorInput.shape[j];
+    }
+
+    bool shapeStatus = mContext->setInputShape(metadata.name.c_str(), inputDims);
+    if (!shapeStatus) {
+      mAsyncInferenceActive = false;
+      throw std::runtime_error("Failed to set input shape for tensor: " + metadata.name);
+    }
+  }
+  
+  // Phase 2: Async host-to-device memory transfers
+  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
+    const auto &metadata = mTensorMetadata[i];
+    
+    if (metadata.ioMode != TensorIOMode::kINPUT) {
+      continue;
+    }
+    
+    auto it = inputMap.find(metadata.name);
+    const auto &tensorInput = *it->second;
+    
+    // Copy input data to GPU buffer using dedicated H2D stream
+    // Optionally register host memory as pinned for faster transfers
+    if (mUsePinnedHostMemory) {
+      cudaError_t reg = cudaHostRegister((void*)tensorInput.data.data(), tensorInput.data.size(), 0);
+      if (reg == cudaSuccess) { unregisterPayload->ptrs.push_back((void*)tensorInput.data.data()); }
+      else { spdlog::warn("cudaHostRegister failed for input '{}' ({}), continuing without pinned host memory", metadata.name, (int)reg); }
+    }
+    checkCudaErrorCode(cudaMemcpyAsync(mBuffers[metadata.bufferIndex], tensorInput.data.data(), 
+                                      tensorInput.data.size(),
+                                      cudaMemcpyHostToDevice, mHostToDeviceStream));
+  }
+  
+  // Ensure all dynamic bindings have been defined
+  if (!mContext->allInputDimensionsSpecified()) {
+    mAsyncInferenceActive = false;
+    throw std::runtime_error("Error, not all required dimensions specified.");
+  }
+  
+  // Set the address of all input and output buffers using cached names
+  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
+    spdlog::debug("Setting tensor address for: {}, buffer index: {}, buffer ptr: {}",
+                  mTensorMetadata[i].name, mTensorMetadata[i].bufferIndex, mBuffers[mTensorMetadata[i].bufferIndex]);
+
+    bool status = mContext->setTensorAddress(mTensorMetadata[i].name.c_str(), mBuffers[mTensorMetadata[i].bufferIndex]);
+    if (!status) {
+      mAsyncInferenceActive = false;
+      throw std::runtime_error("Unable to set tensor address for: " + mTensorMetadata[i].name);
+    }
+  }
+
+  // Get output tensor names from metadata
+  std::vector<const char*> outputNames;
+  for (const auto &metadata : mTensorMetadata) {
+    if (metadata.ioMode == TensorIOMode::kOUTPUT) {
+      outputNames.push_back(metadata.name.c_str());
+    }
+  }
+
+  // verify output shapes (optional)
+  if (mValidateShapes) {
+  const int32_t error_code = mContext->inferShapes(static_cast<int32_t>(outputNames.size()), outputNames.data());
+  if (error_code > 0) {
+    mAsyncInferenceActive = false;
+    std::string namesCombined;
+    for (size_t i = 0; i < outputNames.size(); ++i) {
+      namesCombined += outputNames[i];
+      if (i < outputNames.size() - 1) {
+        namesCombined += ", ";
+      }
+    }
+    throw std::runtime_error(
+      "Failed to infer output shapes, for output names : " + namesCombined
+      + ", " + std::to_string(error_code) + " input tensors not specified correctly.");
+  }
+  
+  }
+  // Phase 3: Use persistent CUDA events for proper stream synchronization
+  // Record completion of H2D transfers
+  checkCudaErrorCode(cudaEventRecord(mEventH2DComplete, mHostToDeviceStream));
+  // If pinned host memory used for inputs, unregister after H2D completes (host callback)
+  if (mUsePinnedHostMemory && unregisterPayload) {
+    checkCudaErrorCode(cudaLaunchHostFunc(mHostToDeviceStream, [](void* data){
+      auto payload = static_cast<HostUnregisterPayload*>(data);
+      for (void* p : payload->ptrs) { cudaHostUnregister(p); }
+      delete payload;
+    }, unregisterPayload));
+  }
+  // Wait for H2D transfers to complete before starting inference
+  checkCudaErrorCode(cudaStreamWaitEvent(mComputeStream, mEventH2DComplete, 0));
+  
+  // Phase 4: Run inference - use CUDA Graph if available, otherwise standard execution
+  if (mUseGraphOptimization && mGraphCaptured) {
+    checkCudaErrorCode(cudaGraphLaunch(mCudaGraphExec, mComputeStream));
+  } else {
+    bool status = mContext->enqueueV3(mComputeStream);
+    if (!status) {
+      mAsyncInferenceActive = false;
+      throw std::runtime_error("Inference execution failed");
+    }
+    
+    // Attempt to capture CUDA graph after first successful inference
+    if (mUseGraphOptimization && !mGraphCaptured) {
+      try {
+        captureGraph();
+      } catch (const std::exception& e) {
+        spdlog::warn("CUDA graph capture failed: {}", e.what());
+        mUseGraphOptimization = false;
+      }
+    }
+  }
+  
+  // Record completion of compute
+  checkCudaErrorCode(cudaEventRecord(mEventComputeComplete, mComputeStream));
+  
+  // Wait for inference to complete before starting D2H transfers
+  checkCudaErrorCode(cudaStreamWaitEvent(mDeviceToHostStream, mEventComputeComplete, 0));
+  
+  // Phase 5: Start async device-to-host transfers
+  mPendingOutputs.clear();
+  for (int i = 0; i < static_cast<int>(mTensorMetadata.size()); ++i) {
+    const auto &metadata = mTensorMetadata[i];
+    
+    if (metadata.ioMode != TensorIOMode::kOUTPUT) {
+      continue; // skip if not tensor output
+    }
+    
+    const Dims inferenceOutputShape = mContext->getTensorShape(metadata.name.c_str());
+    
+    TensorInstance output;
+    size_t outputLen = metadata.dataTypeSize; // start with data type size
+    for (int j = 0; j < inferenceOutputShape.nbDims; ++j) {
+      outputLen *= inferenceOutputShape.d[j];
+      output.shape.push_back(static_cast<int64_t>(inferenceOutputShape.d[j]));
+    }
+    
+    // Create output tensor
+    output.name = metadata.name;
+    output.dtype = toTensorDataType(metadata.dataType);
+    resize(output.data, outputLen);
+    
+    // Optionally register output host buffer for faster D2H
+    if (mUsePinnedHostMemory) {
+      cudaError_t reg = cudaHostRegister((void*)output.data.data(), outputLen, 0);
+      if (reg == cudaSuccess) { mRegisteredOutputHostPtrs.push_back((void*)output.data.data()); }
+    }
+    
+    // Start D2H transfer
+    checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
+                                      static_cast<char*>(mBuffers[metadata.bufferIndex]),
+                                      outputLen, 
+                                      cudaMemcpyDeviceToHost, mDeviceToHostStream));
+    
+    mPendingOutputs.push_back(std::move(output));
+  }
+  
+}
+
+// Wait for async inference completion
+rust::Vec<TensorInstance> Engine::wait_for_completion() {
+  if (!mAsyncInferenceActive) {
+    throw std::runtime_error("No active async inference to wait for. Call infer_async() first.");
+  }
+  
+  // Wait for all D2H transfers to complete
+  checkCudaErrorCode(cudaStreamSynchronize(mDeviceToHostStream));
+  
+  if (mUsePinnedHostMemory) {
+    for (void* p : mRegisteredOutputHostPtrs) { cudaHostUnregister(p); }
+    mRegisteredOutputHostPtrs.clear();
+  }
+  
+  mAsyncInferenceActive = false;
+  
+  // Move pending outputs to return vector
+  rust::Vec<TensorInstance> outputs;
+  for (auto& output : mPendingOutputs) {
+    outputs.push_back(std::move(output));
+  }
+  mPendingOutputs.clear();
+  
+  return outputs;
+}
+
+// Enable CUDA Graph optimization
+void Engine::enable_cuda_graphs() {
+  if (mGraphCaptured) {
+    spdlog::warn("CUDA Graph already captured and enabled");
+    return;
+  }
+  
+  mUseGraphOptimization = true;
+  // Graph will be captured on next inference
+  spdlog::info("CUDA Graph optimization enabled. Graph will be captured on next inference.");
+}
+
+// Check if async inference is complete
+bool Engine::is_inference_complete() const {
+  if (!mAsyncInferenceActive) {
+    return true;
+  }
+  
+  // Check if D2H stream is complete (non-blocking)
+  cudaError_t result = cudaStreamQuery(mDeviceToHostStream);
+  return result == cudaSuccess;
+}
+void Engine::enable_pinned_memory(bool enable) {
+  mUsePinnedHostMemory = enable;
+  spdlog::info("Pinned host memory {}", enable ? "ENABLED" : "DISABLED");
+}
+
+void Engine::set_validation_enabled(bool enable) {
+  mValidateShapes = enable;
+  spdlog::info("Runtime validation {}", enable ? "ENABLED" : "DISABLED");
 }

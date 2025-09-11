@@ -60,6 +60,8 @@ fn main() {
         error!("Failed to load engine: {e}");
         std::process::exit(1);
     });
+    // Enable pinned host memory for faster H2D/D2H (use double buffering to avoid re-register warnings)
+    let _ = engine.pin_mut().enable_pinned_memory(true);
 
     let input_infos = engine.get_input_tensor_info();
     let output_infos = engine.get_output_tensor_info();
@@ -85,44 +87,51 @@ fn main() {
         info!("  '{}': {:?} {:?}", output_info.name, output_info.shape, output_info.dtype);
     }
 
-    // Create input tensors for all inputs
-    let mut input_tensors = Vec::new();
-    
-    for input_info in &input_infos {
-        // Calculate tensor size from shape use 1 for all dynamic dimensions (which are -1) 
-        let new_shape: Vec<i64> = input_info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
-        let input_size = input_info.shape.iter().fold(1, |acc, &e| {
-            let e = if e == -1 { 1 } else { e };
-            acc * e as usize
-        });
+    // Create input tensors for all inputs (typed, zero-copy where applicable)
+    // Helper to build one set of input tensors (typed)
+    let build_inputs = |infos: &Vec<libinfer::TensorInfo>| {
+        let mut tensors = Vec::new();
+        for input_info in infos {
+            // Substitute dynamic dims (-1) with opt shape if available, else 1
+            let shape: Vec<i64> = input_info.shape.iter().enumerate()
+                .map(|(i,&d)| if d == -1 { input_info.opt_shape.get(i).copied().unwrap_or(1) } else { d })
+                .collect();
+            let elems = shape.iter().fold(1usize, |acc, &e| acc * (e as usize));
 
-        // Create appropriate input data based on data type
-        let input_data = match input_info.dtype {
-            TensorDataType::UINT8 => vec![0u8; input_size],
-            TensorDataType::FP32 => {
-                // For FP32, we need 4 bytes per element
-                vec![0u8; input_size * 4]
-            }
-            TensorDataType::INT64 => {
-                // For INT64, we need 8 bytes per element
-                vec![0u8; input_size * 8]
-            }
-            TensorDataType::BOOL => vec![0u8; input_size],
-            _ => {
-                error!("Unsupported input data type");
-                std::process::exit(1);
-            }
+            let tensor = match input_info.dtype {
+                TensorDataType::UINT8 | TensorDataType::BOOL =>
+                    TensorInstance::from_u8(input_info.name.clone(), shape, vec![0u8; elems]),
+                TensorDataType::FP32 =>
+                    TensorInstance::from_f32(input_info.name.clone(), shape, vec![0f32; elems]),
+                TensorDataType::INT64 =>
+                    TensorInstance::from_i64(input_info.name.clone(), shape, vec![0i64; elems]),
+                _ => {
+                    error!("Unsupported input data type: {:?}", input_info.dtype);
+                    std::process::exit(1);
+                }
+            };
+            tensors.push(tensor);
+        }
+        tensors
+    };
+
+    // Create two distinct input buffers to avoid pinned-memory re-registration hazards
+    let mut input_tensors_a = build_inputs(&input_infos);
+    let mut input_tensors_b = build_inputs(&input_infos);
+    // Silence unused mut warning if not modified later
+    let _ = (&mut input_tensors_a, &mut input_tensors_b);
+info!("Running inference for {} iterations...", args.iterations);
+
+    // Warmup to prime kernels and allow CUDA Graph capture
+    for i in 0..50 {
+        let _ = if i % 2 == 0 {
+            engine.pin_mut().infer(&input_tensors_a)
+        } else {
+            engine.pin_mut().infer(&input_tensors_b)
         };
-
-        input_tensors.push(TensorInstance {
-            name: input_info.name.clone(),
-            data: input_data,
-            shape: new_shape,
-            dtype: input_info.dtype.clone(),
-        });
     }
-
-    info!("Running inference for {} iterations...", args.iterations);
+    let _ = engine.pin_mut().enable_cuda_graphs();
+    let _ = engine.pin_mut().set_validation_enabled(false);
 
     // Run inference for specified number of iterations
     for i in 0..args.iterations {
@@ -130,7 +139,7 @@ fn main() {
             info!("Iteration {}/{}", i, args.iterations);
         }
 
-        let result = engine.pin_mut().infer(&input_tensors);
+        let result = if i % 2 == 0 { engine.pin_mut().infer(&input_tensors_a) } else { engine.pin_mut().infer(&input_tensors_b) };
 
         match result {
             Ok(outputs) => {

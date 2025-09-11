@@ -41,50 +41,53 @@ struct Args {
 }
 
 fn benchmark_inference(engine: &mut UniquePtr<Engine>, num_runs: usize) {
+    // Use pinned host memory for faster H2D/D2H
+    let _ = engine.pin_mut().enable_pinned_memory(false);
     let input_dims = engine.get_input_tensor_info();
     
-    // Create input tensors for all inputs with per-tensor data types
-    let input_tensors: Vec<TensorInstance> = input_dims.iter().map(|input_info| {
+    // Create input tensors for all inputs with per-tensor data types (typed, zero-copy)
+    let build_inputs = |dims: &Vec<libinfer::TensorInfo>| -> Vec<TensorInstance> {
+        dims.iter().map(|input_info| {
         info!("Input tensor '{}' has shape {:?} and dtype {:?}", input_info.name, input_info.shape, input_info.dtype);
 
-        // Calculate tensor size from shape use 1 for all dynamic dimensions (which are -1) 
-        let new_shape: Vec<i64> = input_info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
-        let input_len = input_info.shape.iter().fold(1, |acc, &e| {
-            let e = if e == -1 { 1 } else { e };
-            acc * e as usize
-        });        
+        let shape: Vec<i64> = input_info.shape.iter().enumerate()
+            .map(|(i,&d)| if d == -1 { input_info.opt_shape.get(i).copied().unwrap_or(1) } else { d })
+            .collect();
+        let elems = shape.iter().fold(1usize, |acc, &e| acc * (e as usize));
 
-        let input_data: Vec<u8> = match input_info.dtype {
-            TensorDataType::UINT8 => repeat(0).take(input_len).collect(),
-            TensorDataType::FP32 => repeat(0).take(4 * input_len).collect(),
-            TensorDataType::INT64 => repeat(0).take(8 * input_len).collect(),
-            TensorDataType::BOOL => repeat(0).take(input_len).collect(),
+        let input = match input_info.dtype {
+            TensorDataType::UINT8 | TensorDataType::BOOL =>
+                TensorInstance::from_u8(input_info.name.clone(), shape, repeat(0u8).take(elems).collect()),
+            TensorDataType::FP32 =>
+                TensorInstance::from_f32(input_info.name.clone(), shape, repeat(0f32).take(elems).collect()),
+            TensorDataType::INT64 =>
+                TensorInstance::from_i64(input_info.name.clone(), shape, repeat(0i64).take(elems).collect()),
             _ => {
-                error!("Unsupported input data type");
+                error!("Unsupported input data type: {:?}", input_info.dtype);
                 std::process::exit(1);
-            },
-        };
-
-        let input = TensorInstance {
-            name: input_info.name.clone(),
-            data: input_data,
-            shape: new_shape,
-            dtype: input_info.dtype.clone(),
+            }
         };
         
         info!("Created input tensor '{}' with {} elements (dtype: {:?})", input.name, input.data.len(), input.dtype);
 
         input
-    }).collect();
+            }).collect()
+    };
 
-    // Warmup.
+    // Double-buffer inputs to avoid pinned-memory re-registration stalls
+    let input_a = build_inputs(&input_dims);
+    let input_b = build_inputs(&input_dims);
+
+    // Warmup with alternating buffers
     info!("Warming up inference codepath...");
-    for i in 0..1024 {
-        let _output = engine.pin_mut().infer(&input_tensors).unwrap();
-        if i % 100 == 0 && i > 0 {
-            info!("Warmup progress: {}/1024", i);
-        }
+    for i in 0..256 {
+        let _output = if i % 2 == 0 { engine.pin_mut().infer(&input_a) } else { engine.pin_mut().infer(&input_b) };
+        if i % 64 == 0 && i > 0 { info!("Warmup progress: {}/256", i); }
     }
+
+    // Enable CUDA Graphs and disable validation for hot path
+    let _ = engine.pin_mut().enable_cuda_graphs();
+    let _ = engine.pin_mut().set_validation_enabled(false);
 
     // Measure.
     info!("Beginning {num_runs} inference runs...");

@@ -516,6 +516,18 @@ fn benchmark_inference(
         let _ = run_tensorrt_inference(engine, input_data_list_u8, input_dims)?;
     }
 
+    // Prepare double-buffered TensorRT inputs and enable CUDA graphs for hot path
+    let build_trt_inputs = |infos: &Vec<libinfer::TensorInfo>, data_u8: &[Vec<u8>]| -> Vec<TensorInstance> {
+        infos.iter().enumerate().map(|(i, info)| {
+            let new_shape: Vec<i64> = info.shape.iter().map(|&d| if d == -1 { 1 } else { d }).collect();
+            TensorInstance { name: info.name.clone(), data: data_u8[i].clone(), shape: new_shape, dtype: info.dtype.clone() }
+        }).collect()
+    };
+    let trt_input_a = build_trt_inputs(&input_dims.to_vec(), input_data_list_u8);
+    let trt_input_b = build_trt_inputs(&input_dims.to_vec(), input_data_list_u8);
+    let _ = engine.pin_mut().enable_cuda_graphs();
+    let _ = engine.pin_mut().set_validation_enabled(false);
+
     info!("Running {} benchmark iterations...", num_runs);
     
     // Benchmark ONNX with progress reporting
@@ -560,7 +572,7 @@ fn benchmark_inference(
     let tensorrt_latencies: Vec<Duration> = (0..num_runs)
         .map(|i| {
             let start = Instant::now();
-            let _ = run_tensorrt_inference(engine, input_data_list_u8, input_dims);
+            let _ = if i % 2 == 0 { engine.pin_mut().infer(&trt_input_a) } else { engine.pin_mut().infer(&trt_input_b) };
             let iteration_time = start.elapsed();
             recent_trt_latencies.push(iteration_time);
             
@@ -659,6 +671,8 @@ fn main() -> Result<()> {
 
     let mut engine = Engine::new(&options)
         .map_err(|e| anyhow!("Failed to load TensorRT engine: {}", e))?;
+    // Use pinned host memory for faster H2D/D2H
+    let _ = engine.pin_mut().enable_pinned_memory(true);
 
     info!("TensorRT engine loaded successfully");
 

@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include "rust/cxx.h"
+#include <unordered_map>
 
 struct Options;
 struct TensorInfo;
@@ -74,8 +75,29 @@ public:
   // Load and prepare the network for inference.
   void load();
 
-  // Run inference and return output tensors.
+  // Run inference and return output tensors (synchronous).
   rust::Vec<TensorInstance> infer(const rust::Vec<TensorInstance> &input);
+  
+  // Run asynchronous inference - returns immediately, use wait_for_completion() to get results
+  void infer_async(const rust::Vec<TensorInstance> &input);
+  
+  // Wait for async inference completion and return results
+  rust::Vec<TensorInstance> wait_for_completion();
+  
+  // Enable CUDA Graph optimization (call after first inference)
+  void enable_cuda_graphs();
+  
+  // Enable or disable registering host memory (inputs/outputs) as pinned for faster H2D/D2H
+  // When enabled, input host buffers passed by the caller are temporarily registered and
+  // unregistered automatically after H2D completes. Output buffers allocated by the engine
+  // are registered and unregistered after wait_for_completion().
+  void enable_pinned_memory(bool enable);
+
+  // Enable or disable additional runtime validation (e.g., inferShapes). Default is enabled.
+  void set_validation_enabled(bool enable);
+  
+  // Check if async inference is complete (non-blocking)
+  bool is_inference_complete() const;
 
   // Get dimensions for all input tensors
   rust::Vec<TensorInfo> get_input_tensor_info() const;
@@ -84,6 +106,25 @@ public:
   rust::Vec<TensorInfo> get_output_tensor_info() const;
 
 private:
+  // Async inference state
+  std::vector<TensorInstance> mPendingOutputs;
+  bool mAsyncInferenceActive;
+  
+  // Host memory registration control
+  bool mUsePinnedHostMemory;
+  bool mValidateShapes;
+
+  // Persistent CUDA events reused across inferences
+  cudaEvent_t mEventH2DComplete;
+  cudaEvent_t mEventComputeComplete;
+  // Output host buffers registered when pinned memory is enabled
+  std::vector<void*> mRegisteredOutputHostPtrs;
+  
+  // Performance optimization helpers
+  void setupStreams();
+  void captureGraph();
+  void synchronizeStreams();
+  
   // Tensor metadata stored at construction time
   struct TensorMetadata {
     std::string name;
@@ -109,7 +150,16 @@ private:
   std::unique_ptr<nvinfer1::IExecutionContext> mContext = nullptr;
   Logger mLogger;
 
-  cudaStream_t mInferenceCudaStream;
+  // Multi-stream architecture for better performance
+  cudaStream_t mHostToDeviceStream;  // Stream for H2D memory transfers
+  cudaStream_t mComputeStream;       // Stream for inference execution
+  cudaStream_t mDeviceToHostStream;  // Stream for D2H memory transfers
+  
+  // CUDA Graph support for TensorRT 10.9
+  cudaGraph_t mCudaGraph;
+  cudaGraphExec_t mCudaGraphExec;
+  bool mGraphCaptured;
+  bool mUseGraphOptimization;
 
   // Options values.
   const std::string kEnginePath;

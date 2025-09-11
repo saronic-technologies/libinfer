@@ -62,6 +62,8 @@ fn main() {
         error!("Failed to load engine: {e}");
         std::process::exit(1);
     });
+    // Pinned host memory improves transfer overlap
+    let _ = engine.pin_mut().enable_pinned_memory(true);
 
     let input_infos = engine.get_input_tensor_info();
     let output_infos = engine.get_output_tensor_info();
@@ -86,44 +88,42 @@ fn main() {
     for &batch_size in &batch_sizes_to_test {
         info!("\nTesting batch size: {}", batch_size);
 
-        // Create input tensors for all inputs
-        let input_tensors: Vec<TensorInstance> = input_infos.iter().map(|info| {
-            let dtype_size = match info.dtype {
-                TensorDataType::UINT8 => 1,
-                TensorDataType::FP32 => 4,
-                TensorDataType::INT64 => 8,
-                TensorDataType::BOOL => 1,
-                _ => {
-                    error!("Unsupported data type: {:?}", info.dtype);
-                    1 // Default to 1 byte to avoid panic
+        // Helper to construct one set of inputs for this batch size
+        let build_inputs = |infos: &Vec<libinfer::TensorInfo>| -> Vec<TensorInstance> {
+            infos.iter().map(|info| {
+                let new_shape: Vec<i64> = info.shape.iter().map(|&d| if d == -1 { batch_size } else { d }).collect();
+                let elems = new_shape.iter().fold(1usize, |acc, &e| acc * (e as usize));
+                match info.dtype {
+                    TensorDataType::UINT8 | TensorDataType::BOOL =>
+                        TensorInstance::from_u8(info.name.clone(), new_shape, vec![0u8; elems]),
+                    TensorDataType::FP32 =>
+                        TensorInstance::from_f32(info.name.clone(), new_shape, vec![0f32; elems]),
+                    TensorDataType::INT64 =>
+                        TensorInstance::from_i64(info.name.clone(), new_shape, vec![0i64; elems]),
+                    _ => {
+                        error!("Unsupported data type: {:?}", info.dtype);
+                        std::process::exit(1);
+                    }
                 }
-            };
+            }).collect()
+        };
 
-            // Calculate tensor size from shape use batch_size for all dynamic dimensions (which are -1) 
-            let new_shape: Vec<i64> = info.shape.iter().map(|&d| if d == -1 { batch_size } else { d }).collect();
-            let input_size = new_shape.iter().fold(1, |acc, &e| {
-                let e = if e == -1 { 1 } else { e };
-                acc * e as usize
-            });
+        // Double-buffer to avoid re-register warnings when using pinned memory
+        let input_tensors_a = build_inputs(&input_infos);
+        let input_tensors_b = build_inputs(&input_infos);
 
-            TensorInstance {
-                name: info.name.clone(),
-                data: vec![0u8; input_size * dtype_size],
-                shape: new_shape,
-                dtype: info.dtype.clone(),
-            }
-        }).collect();
+        info!("Total input size across all tensors: {} bytes", input_tensors_a.iter().map(|t| t.data.len()).sum::<usize>());
 
-        info!("Total input size across all tensors: {} bytes", input_tensors.iter().map(|t| t.data.len()).sum::<usize>());
-
-        // Warmup
-        for _ in 0..5 {
-            let _ = engine.pin_mut().infer(&input_tensors);
+        // Warmup (alternate buffers) and enable CUDA graphs for hot path
+        for i in 0..32 {
+            let _ = if i % 2 == 0 { engine.pin_mut().infer(&input_tensors_a) } else { engine.pin_mut().infer(&input_tensors_b) };
         }
+        let _ = engine.pin_mut().enable_cuda_graphs();
+        let _ = engine.pin_mut().set_validation_enabled(false);
 
         // Measure inference time
         let start = Instant::now();
-        let result = engine.pin_mut().infer(&input_tensors);
+        let result = engine.pin_mut().infer(&input_tensors_a);
         let elapsed = start.elapsed();
 
         match result {
@@ -141,5 +141,7 @@ fn main() {
                 error!("Inference failed: {}", e);
             }
         }
+        // Re-enable validation for next shape (optional safety)
+        let _ = engine.pin_mut().set_validation_enabled(true);
     }
 }

@@ -19,6 +19,7 @@ name = "libinfer"
 
 [dependencies]
 cxx = "1.0.116"
+bytemuck = { version = "1.15", features = ["extern_crate_alloc"] }
 
 [build-dependencies]
 cmake = "0.1.50"

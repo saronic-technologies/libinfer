@@ -117,19 +117,54 @@ pub mod ffi {
         /// A vector of TensorInfo containing name and dimensions for each output tensor.
         fn get_output_tensor_info(self: &Engine) -> Vec<TensorInfo>;
 
-        /// Run inference on an input batch.
+        /// Run synchronous inference on an input batch.
         ///
         /// # Arguments
-        /// * `input` - A flattened vector representing the input tensor data
+        /// * `input` - A vector of TensorInstance representing the input tensor data
         ///
         /// # Returns
-        /// A Result containing either the output tensor data as a vector of f32 values,
+        /// A Result containing either the output tensor data as a vector of TensorInstance,
         /// or an error message if inference failed.
         ///
-        /// The input vector must be a flattened representation of shape
-        /// `get_input_tensor_info` with appropriate dynamic dimensions. Likewise, the output dimension will
-        /// be of shape `get_output_tensor_info`.
+        /// The input vector must contain tensors with shapes matching the engine's input specification.
         fn infer(self: Pin<&mut Engine>, input: &Vec<TensorInstance>) -> Result<Vec<TensorInstance>>;
+        
+        /// Start asynchronous inference on an input batch.
+        ///
+        /// # Arguments
+        /// * `input` - A vector of TensorInstance representing the input tensor data
+        ///
+        /// # Returns
+        /// Returns immediately after starting inference. Use wait_for_completion() to get results.
+        fn infer_async(self: Pin<&mut Engine>, input: &Vec<TensorInstance>) -> Result<()>;
+        
+        /// Wait for asynchronous inference to complete and return results.
+        ///
+        /// # Returns
+        /// A Result containing the output tensor data as a vector of TensorInstance.
+        /// This will block until the async inference started by infer_async() completes.
+        fn wait_for_completion(self: Pin<&mut Engine>) -> Result<Vec<TensorInstance>>;
+        
+        /// Enable CUDA Graph optimization for repeated inference patterns.
+        /// 
+        /// Should be called after the first inference to capture the execution pattern.
+        /// Subsequent inferences will use the captured graph for better performance.
+        fn enable_cuda_graphs(self: Pin<&mut Engine>) -> Result<()>;
+        
+        /// Enable or disable registering host memory (inputs/outputs) as pinned for faster transfers.
+        /// When enabled, input host buffers are temporarily registered and outputs are registered
+        /// until wait_for_completion() returns.
+        fn enable_pinned_memory(self: Pin<&mut Engine>, enable: bool) -> Result<()>;
+        
+        /// Enable or disable extra runtime validation (e.g., inferShapes) on the hot path.
+        /// Enabled by default for safety; disable for performance once inputs are known correct.
+        fn set_validation_enabled(self: Pin<&mut Engine>, enable: bool) -> Result<()>;
+        
+        /// Check if asynchronous inference is complete (non-blocking).
+        ///
+        /// # Returns
+        /// true if the async inference has completed, false if still running.
+        fn is_inference_complete(self: &Engine) -> bool;
     }
 }
 
@@ -170,3 +205,24 @@ impl Engine {
 
 // Engine is not thread safe, but can be moved between threads.
 unsafe impl Send for ffi::Engine {}
+
+
+// Convenience helpers to build typed tensors
+impl TensorInstance {
+    /// Construct a FP32 tensor from owned Vec<f32> (converted to bytes)
+    pub fn from_f32(name: impl Into<String>, shape: Vec<i64>, data: Vec<f32>) -> Self {
+        let bytes: Vec<u8> = bytemuck::cast_slice(&data).to_vec();
+        TensorInstance { name: name.into(), data: bytes, shape, dtype: TensorDataType::FP32 }
+    }
+
+    /// Construct an INT64 tensor from owned Vec<i64> (converted to bytes)
+    pub fn from_i64(name: impl Into<String>, shape: Vec<i64>, data: Vec<i64>) -> Self {
+        let bytes: Vec<u8> = bytemuck::cast_slice(&data).to_vec();
+        TensorInstance { name: name.into(), data: bytes, shape, dtype: TensorDataType::INT64 }
+    }
+
+    /// Construct a UINT8 tensor from owned Vec<u8> (no copy)
+    pub fn from_u8(name: impl Into<String>, shape: Vec<i64>, data: Vec<u8>) -> Self {
+        TensorInstance { name: name.into(), data, shape, dtype: TensorDataType::UINT8 }
+    }
+}
