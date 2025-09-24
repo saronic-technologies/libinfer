@@ -217,23 +217,29 @@ void Engine::load() {
 }
 
 rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
+  spdlog::error("INFER!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   const auto &dims = mInputDims[0];
 
+  spdlog::error("Calculating batch size step 1!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   // Check that the passed batch size can be handled.
   const int32_t calculatedBatchSize =
       input.size() / (dims.d[0] * dims.d[1] * dims.d[2] * mInputDataTypeSize);
 
+  spdlog::error("Calculating batch size step 2!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   if (calculatedBatchSize < mMinBatchSize) {
     throw std::runtime_error("Input is less the minimum batch size: " +
                              std::to_string(calculatedBatchSize) + " > " +
                              std::to_string(mMinBatchSize));
   }
 
+  spdlog::error("Calculating batch size step 3!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   if (calculatedBatchSize > mMaxBatchSize) {
     throw std::runtime_error("Input is greater than maximum batch size: " +
                              std::to_string(calculatedBatchSize) + " > " +
                              std::to_string(mMaxBatchSize));
   }
+
+  spdlog::error("Calculated batch size!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
   // Check that vector has enough elements for full input.
   if (input.size() % (dims.d[0] * dims.d[1] * dims.d[2]) != 0) {
@@ -241,14 +247,18 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
         "Input vector does not contain a whole number of batches");
   }
 
+  spdlog::error("Trying to set input shape!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   // Define the batch size.
   nvinfer1::Dims4 inputDims = {calculatedBatchSize, dims.d[0], dims.d[1],
                                dims.d[2]};
   mContext->setInputShape(mIOTensorNames[0].c_str(), inputDims);
+  spdlog::error("Set input shape!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
+  spdlog::error("Copy frames to GPU!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   checkCudaErrorCode(cudaMemcpyAsync(mBuffers[0], input.data(), input.size(),
                                      cudaMemcpyHostToDevice,
                                      mInferenceCudaStream));
+  spdlog::error("Finished copying frames to GPU!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
   // Ensure all dynamic bindings have been defined.
   if (!mContext->allInputDimensionsSpecified()) {
@@ -265,19 +275,23 @@ rust::Vec<float> Engine::infer(const rust::Vec<uint8_t> &input) {
   }
 
   // Run inference.
+  spdlog::error("Run Inference!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   bool status = mContext->enqueueV3(mInferenceCudaStream);
   if (!status) {
     throw std::runtime_error("enqueue failed");
   }
+  spdlog::error("Finished Inference!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
   const auto outputLen = calculatedBatchSize * mOutputLengths[0];
   rust::Vec<float> output;
   resize(output, outputLen);
+  spdlog::error("Copy data off GPU!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   checkCudaErrorCode(cudaMemcpyAsync(
       output.data(), static_cast<char *>(mBuffers[1]),
       outputLen * sizeof(float), cudaMemcpyDeviceToHost, mInferenceCudaStream));
 
   checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
+  spdlog::error("Copied data off GPU!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
   return output;
 }
