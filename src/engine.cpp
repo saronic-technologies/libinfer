@@ -330,14 +330,18 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     if (!shapeStatus) {
       throw std::runtime_error("Failed to set input shape for tensor: " + metadata.name);
     }
-    
+
+    std::cout << "Copying data into GPU Buffer!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
     // Copy input data to GPU buffer
     checkCudaErrorCode(cudaMemcpyAsync(mBuffers[i], tensorInput.data.data(), 
                                       tensorInput.data.size(),
                                       cudaMemcpyHostToDevice, mInferenceCudaStream));
+    std::cout << "Copied data into GPU Buffer!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
   }
 
+  std::cout << "Running Inference!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
   checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
+  std::cout << "Finished Inference!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
   
   // Ensure all dynamic bindings have been defined
   if (!mContext->allInputDimensionsSpecified()) {
