@@ -112,6 +112,10 @@ Engine::~Engine() {
 }
 
 void Engine::load() {
+  // Redirect stdout to stderr for the duration of this function.
+  // TensorRT sometimes prints warnings directly to stdout, bypassing ILogger.
+  StdoutToStderr redirectStdout;
+
   // Initialize plugins
   initLibNvInferPlugins(&mLogger, "");
 

@@ -4,3 +4,4 @@ target/
 *.engine
 .claude/
 .clangd
+.ccls-cache
