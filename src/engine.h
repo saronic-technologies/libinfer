@@ -11,32 +11,20 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-// RAII helper to redirect stdout to stderr.
+// Globally redirect stdout to stderr once at library load time.
 // TensorRT sometimes prints warnings directly to stdout, bypassing the ILogger interface.
-// This class ensures all stdout output goes to stderr instead.
-class StdoutToStderr {
+// This ensures all stdout output from C++ goes to stderr instead.
+class GlobalStdoutRedirect {
 public:
-    StdoutToStderr() {
-        // Save original stdout
-        saved_stdout = dup(STDOUT_FILENO);
-        // Redirect stdout to stderr
-        dup2(STDERR_FILENO, STDOUT_FILENO);
+    static void init() {
+        static GlobalStdoutRedirect instance;
     }
-
-    ~StdoutToStderr() {
-        // Flush before restoring
-        fflush(stdout);
-        // Restore original stdout
-        dup2(saved_stdout, STDOUT_FILENO);
-        close(saved_stdout);
-    }
-
-    // Non-copyable, non-movable
-    StdoutToStderr(const StdoutToStderr&) = delete;
-    StdoutToStderr& operator=(const StdoutToStderr&) = delete;
 
 private:
-    int saved_stdout;
+    GlobalStdoutRedirect() {
+        // Redirect stdout to stderr permanently for this process
+        dup2(STDERR_FILENO, STDOUT_FILENO);
+    }
 };
 
 #include "rust/cxx.h"
