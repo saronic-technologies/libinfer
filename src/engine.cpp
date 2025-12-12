@@ -101,10 +101,6 @@ Engine::Engine(const Options &options)
 }
 
 Engine::~Engine() {
-  // Redirect stdout to stderr for the duration of this destructor.
-  // TensorRT sometimes prints warnings directly to stdout when freeing resources.
-  StdoutToStderr redirectStdout;
-
   // Free the GPU memory
   for (auto &buffer : mBuffers) {
     checkCudaErrorCode(cudaFree(buffer));
@@ -116,10 +112,6 @@ Engine::~Engine() {
 }
 
 void Engine::load() {
-  // Redirect stdout to stderr for the duration of this function.
-  // TensorRT sometimes prints warnings directly to stdout, bypassing ILogger.
-  StdoutToStderr redirectStdout;
-
   // Initialize plugins
   initLibNvInferPlugins(&mLogger, "");
 
@@ -343,10 +335,6 @@ void Engine::load() {
 }
 
 rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) {
-  // Redirect stdout to stderr for the duration of this function.
-  // TensorRT sometimes prints warnings directly to stdout, bypassing ILogger.
-  StdoutToStderr redirectStdout;
-
   // Create a map from tensor name to input data for easy lookup
   std::unordered_map<std::string, const TensorInstance*> inputMap;
   for (const auto &tensorInput : input) {
