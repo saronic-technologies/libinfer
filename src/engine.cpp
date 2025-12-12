@@ -343,6 +343,10 @@ void Engine::load() {
 }
 
 rust::Vec<TensorInstance> Engine::infer(const rust::Vec<TensorInstance> &input) {
+  // Redirect stdout to stderr for the duration of this function.
+  // TensorRT sometimes prints warnings directly to stdout, bypassing ILogger.
+  StdoutToStderr redirectStdout;
+
   // Create a map from tensor name to input data for easy lookup
   std::unordered_map<std::string, const TensorInstance*> inputMap;
   for (const auto &tensorInput : input) {
