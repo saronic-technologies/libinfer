@@ -101,6 +101,10 @@ Engine::Engine(const Options &options)
 }
 
 Engine::~Engine() {
+  // Redirect stdout to stderr for the duration of this destructor.
+  // TensorRT sometimes prints warnings directly to stdout when freeing resources.
+  StdoutToStderr redirectStdout;
+
   // Free the GPU memory
   for (auto &buffer : mBuffers) {
     checkCudaErrorCode(cudaFree(buffer));
@@ -112,8 +116,9 @@ Engine::~Engine() {
 }
 
 void Engine::load() {
-  // Ensure stdout is redirected to stderr (one-time global init)
-  GlobalStdoutRedirect::init();
+  // Redirect stdout to stderr for the duration of this function.
+  // TensorRT sometimes prints warnings directly to stdout, bypassing ILogger.
+  StdoutToStderr redirectStdout;
 
   // Initialize plugins
   initLibNvInferPlugins(&mLogger, "");
