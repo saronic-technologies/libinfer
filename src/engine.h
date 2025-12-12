@@ -8,6 +8,7 @@
 #include <cuda_runtime.h>
 #include <fstream>
 #include <unistd.h>
+#include <iostream>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
@@ -17,6 +18,9 @@
 class StdoutToStderr {
 public:
     StdoutToStderr() {
+        // Flush any pending output before redirecting
+        std::cout.flush();
+        fflush(stdout);
         // Save original stdout
         saved_stdout = dup(STDOUT_FILENO);
         // Redirect stdout to stderr
@@ -25,6 +29,7 @@ public:
 
     ~StdoutToStderr() {
         // Flush before restoring
+        std::cout.flush();
         fflush(stdout);
         // Restore original stdout
         dup2(saved_stdout, STDOUT_FILENO);
