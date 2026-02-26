@@ -97,6 +97,14 @@ pub mod ffi {
         device_index: u32,
     }
 
+    extern "Rust" {
+        /// Allocate a Vec<u8> of exactly `size` bytes on the Rust heap,
+        /// zero-initialized. Used by engine.cpp to bypass the per-element
+        /// push_back FFI loop in the resize() workaround, which costs ~4ns
+        /// per call and dominates inference latency for large outputs.
+        fn new_output_buffer(size: usize) -> Vec<u8>;
+    }
+
     unsafe extern "C++" {
         include!("libinfer/src/engine.h");
 
@@ -216,6 +224,10 @@ impl Engine {
             max: vs[2],
         }
     }
+}
+
+fn new_output_buffer(size: usize) -> Vec<u8> {
+    vec![0u8; size]
 }
 
 // Engine is not thread safe, but can be moved between threads.

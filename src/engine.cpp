@@ -420,12 +420,16 @@ rust::Vec<OutputTensor> Engine::_infer(const rust::Vec<InputTensor> &input, bool
     
     const auto outputLen = batchSize * mOutputLengths[outputIdx];
     
-    // Create output tensor
+    // Create output tensor. Use new_output_buffer() rather than the
+    // resize() push_back loop — resize() crosses the CXX FFI boundary
+    // once per byte, costing ~4ns each (~11ms for a 2.8MB FP32 output).
+    // new_output_buffer() does a single vec![0u8; n] on the Rust side:
+    // one allocation + one memset, then returns ownership across the boundary.
     OutputTensor output;
     size_t copySize = outputLen * metadata.dataTypeSize;
     output.name = metadata.name;
     output.dtype = toTensorDataType(metadata.dataType);
-    resize(output.data, copySize);
+    output.data = new_output_buffer(copySize);
     
     // Copy data from GPU buffer
     checkCudaErrorCode(cudaMemcpyAsync(output.data.data(), 
