@@ -101,12 +101,25 @@ Engine::Engine(const Options &options)
 }
 
 Engine::~Engine() {
-  // Free the GPU memory
+  // Free the GPU memory. Do not use checkCudaErrorCode here. Destructors
+  // must not throw. If cudaFree fails (e.g. context already destroyed) we
+  // log and continue rather than calling std::terminate via an exception
+  // during stack unwinding.
   for (auto &buffer : mBuffers) {
-    checkCudaErrorCode(cudaFree(buffer));
+    auto err = cudaFree(buffer);
+    if (err != cudaSuccess) {
+      spdlog::error("cudaFree failed in ~Engine: {} ({})",
+                    cudaGetErrorName(err), cudaGetErrorString(err));
+    }
   }
 
-  checkCudaErrorCode(cudaStreamDestroy(mInferenceCudaStream));
+  if (mInferenceCudaStream) {
+    auto err = cudaStreamDestroy(mInferenceCudaStream);
+    if (err != cudaSuccess) {
+      spdlog::error("cudaStreamDestroy failed in ~Engine: {} ({})",
+                    cudaGetErrorName(err), cudaGetErrorString(err));
+    }
+  }
 
   mBuffers.clear();
 }
@@ -173,11 +186,14 @@ void Engine::load() {
   // Create the cuda stream that will be used for inference
   checkCudaErrorCode(cudaStreamCreate(&mInferenceCudaStream));
 
-  // Create a cuda stream
-  cudaStream_t stream;
+  // Create a temporary stream for async buffer allocation. Initialized to
+  // nullptr so the catch block can safely skip destruction if creation failed.
+  cudaStream_t stream = nullptr;
   checkCudaErrorCode(cudaStreamCreate(&stream));
 
-  // Allocate GPU memory for input and output buffers
+  // Allocate GPU memory for input and output buffers.
+  // Wrap in try/catch so the temporary stream is always destroyed even if
+  // toTensorDataType, cudaMallocAsync, or the IO type check throws.
   mOutputLengths.clear();
   mTensorMetadata.clear();
   mTensorMetadata.reserve(mEngine->getNbIOTensors());
@@ -259,9 +275,22 @@ void Engine::load() {
     }
   }
 
-  // Synchronize and destroy the cuda stream
-  checkCudaErrorCode(cudaStreamSynchronize(stream));
-  checkCudaErrorCode(cudaStreamDestroy(stream));
+  // Synchronize and destroy the temporary allocation stream.
+  // On any exception from the loop above, ensure stream is cleaned up.
+  auto syncAndDestroy = [&]() {
+    if (stream) {
+      cudaStreamSynchronize(stream);
+      cudaStreamDestroy(stream);
+      stream = nullptr;
+    }
+  };
+  try {
+    checkCudaErrorCode(cudaStreamSynchronize(stream));
+  } catch (...) {
+    syncAndDestroy();
+    throw;
+  }
+  syncAndDestroy();
 }
 
 rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
