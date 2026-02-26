@@ -77,6 +77,10 @@ public:
   // Run inference and return output tensors.
   rust::Vec<OutputTensor> infer(const rust::Vec<InputTensor> &input);
 
+  // Same as infer() but inserts a cudaStreamSynchronize between H2D copies and
+  // enqueueV3. Used for benchmarking to directly measure the cost of that sync.
+  rust::Vec<OutputTensor> infer_with_sync(const rust::Vec<InputTensor> &input);
+
   // Get dimensions for all input tensors
   rust::Vec<TensorInfo> get_input_dims() const;
 
@@ -98,6 +102,8 @@ public:
   size_t get_num_outputs() const;
 
 private:
+  rust::Vec<OutputTensor> _infer(const rust::Vec<InputTensor> &input, bool syncBeforeEnqueue);
+
   // Tensor metadata stored at construction time
   struct TensorMetadata {
     std::string name;

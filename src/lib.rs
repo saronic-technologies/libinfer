@@ -157,6 +157,10 @@ pub mod ffi {
         /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
         fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
+
+        /// Same as infer() but inserts a cudaStreamSynchronize between H2D copies
+        /// and enqueueV3. Only useful for benchmarking to measure the sync overhead.
+        fn infer_with_sync(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
     }
 }
 

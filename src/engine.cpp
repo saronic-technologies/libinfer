@@ -265,6 +265,14 @@ void Engine::load() {
 }
 
 rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
+  return _infer(input, false);
+}
+
+rust::Vec<OutputTensor> Engine::infer_with_sync(const rust::Vec<InputTensor> &input) {
+  return _infer(input, true);
+}
+
+rust::Vec<OutputTensor> Engine::_infer(const rust::Vec<InputTensor> &input, bool syncBeforeEnqueue) {
   // Create a map from tensor name to input data for easy lookup
   std::unordered_map<std::string, const InputTensor*> inputMap;
   for (const auto &tensorInput : input) {
@@ -337,8 +345,42 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
                                       cudaMemcpyHostToDevice, mInferenceCudaStream));
   }
 
-  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
-  
+  // No explicit sync needed here. Reasons:
+  //
+  // 1. CUDA stream ordering: all H2D copies above and enqueueV3 below are
+  //    submitted to the same stream (mInferenceCudaStream). CUDA guarantees
+  //    in-order execution within a stream, so the copies are complete before
+  //    any kernel dispatched by enqueueV3 begins.
+  //    https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html
+  //
+  // 2. Pageable host memory: tensorInput.data is a Rust Vec<u8> on the
+  //    regular heap (not cudaMallocHost pinned memory). CUDA documentation
+  //    states that cudaMemcpyAsync with pageable memory reverts to synchronous
+  //    behavior — the call already blocks the CPU until the copy is staged.
+  //    A subsequent cudaStreamSynchronize would be doubly redundant.
+  //    https://docs.nvidia.com/cuda/cuda-runtime-api/api-sync-behavior.html
+  //
+  // 3. Auxiliary streams: TensorRT may internally fan out to auxiliary streams
+  //    during enqueueV3 for parallel layer execution. Per TRT documentation,
+  //    TRT inserts event synchronizations so that all auxiliary streams wait
+  //    on the main stream at the start of enqueueV3, and the main stream waits
+  //    on all auxiliary streams at the end. Our H2D copies are therefore
+  //    visible to all TRT-internal work.
+  //    https://docs.nvidia.com/deeplearning/tensorrt/latest/performance/best-practices.html
+  //
+  // 4. CPU-side calls: setInputShape, allInputDimensionsSpecified, and
+  //    setTensorAddress are all pure CPU operations — no CUDA stream
+  //    interaction. setTensorAddress only registers a pointer; per TRT docs,
+  //    "data representing shape values is not copied until enqueueV3 is
+  //    invoked."
+  //    https://docs.nvidia.com/deeplearning/tensorrt/latest/api/migration-guide.html
+  //
+  // syncBeforeEnqueue=true re-introduces the sync for benchmarking purposes
+  // so callers can directly measure its cost.
+  if (syncBeforeEnqueue) {
+    checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
+  }
+
   // Ensure all dynamic bindings have been defined
   if (!mContext->allInputDimensionsSpecified()) {
     throw std::runtime_error("Error, not all required dimensions specified.");
