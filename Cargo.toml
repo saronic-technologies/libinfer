@@ -60,7 +60,4 @@ path = "examples/functional_test.rs"
 name = "onnx_tensorrt_compare"
 path = "examples/onnx_tensorrt_compare.rs"
 
-[[example]]
-name = "sync_compare"
-path = "examples/sync_compare.rs"
 
