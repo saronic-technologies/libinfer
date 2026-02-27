@@ -75,6 +75,17 @@ cargo run --example basic -- --path /path/to/model.engine
 
 See the documentation in each example file for specific requirements.
 
+## Synchronization Model
+
+No `cudaStreamSynchronize` is needed between H2D copies and `enqueueV3`. This is safe for several reasons:
+
+1. **Stream ordering** — all H2D copies and `enqueueV3` are submitted to the same CUDA stream, which guarantees in-order execution. Copies complete before kernels begin.
+2. **Pageable host memory** — input data comes from Rust `Vec<u8>` on the regular heap (not pinned memory). `cudaMemcpyAsync` with pageable memory blocks the CPU until the copy is staged, making a subsequent sync redundant.
+3. **TensorRT auxiliary streams** — TRT may use auxiliary streams internally during `enqueueV3`, but it inserts event synchronizations so all auxiliary work waits on the main stream at entry and the main stream waits on all auxiliary work at exit.
+4. **CPU-side calls** — `setInputShape`, `allInputDimensionsSpecified`, and `setTensorAddress` are pure CPU operations with no stream interaction.
+
+A post-inference `cudaStreamSynchronize` is still required to ensure D2H output copies are complete before reading results. `infer()` handles this internally.
+
 ## Current Limitations
 - The underlying engine code is not threadsafe (and the Rust binding does not implement `Sync`)
 - Engine instances are `Send` but not `Sync`

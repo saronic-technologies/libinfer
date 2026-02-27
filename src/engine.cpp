@@ -186,14 +186,7 @@ void Engine::load() {
   // Create the cuda stream that will be used for inference
   checkCudaErrorCode(cudaStreamCreate(&mInferenceCudaStream));
 
-  // Create a temporary stream for async buffer allocation. Initialized to
-  // nullptr so the catch block can safely skip destruction if creation failed.
-  cudaStream_t stream = nullptr;
-  checkCudaErrorCode(cudaStreamCreate(&stream));
-
   // Allocate GPU memory for input and output buffers.
-  // Wrap in try/catch so the temporary stream is always destroyed even if
-  // toTensorDataType, cudaMallocAsync, or the IO type check throws.
   mOutputLengths.clear();
   mTensorMetadata.clear();
   mTensorMetadata.reserve(mEngine->getNbIOTensors());
@@ -243,7 +236,7 @@ void Engine::load() {
       checkCudaErrorCode(
         cudaMallocAsync(&mBuffers[i],
           inputLen,
-          stream
+          mInferenceCudaStream
         )
       );
     } else if (tensorType == TensorIOMode::kOUTPUT) {
@@ -268,39 +261,18 @@ void Engine::load() {
       checkCudaErrorCode(cudaMallocAsync(
           &mBuffers[i], 
           outputLen,
-          stream));
+          mInferenceCudaStream));
     } else {
       throw std::runtime_error(
           "Error, IO Tensor is neither an input or output!");
     }
   }
 
-  // Synchronize the temporary allocation stream (with error checking),
-  // then destroy it. On any exception, ensure the stream is cleaned up.
-  auto destroyStream = [&]() {
-    if (stream) {
-      cudaStreamDestroy(stream);
-      stream = nullptr;
-    }
-  };
-  try {
-    checkCudaErrorCode(cudaStreamSynchronize(stream));
-  } catch (...) {
-    destroyStream();
-    throw;
-  }
-  destroyStream();
+  // Ensure all async allocations are complete before returning.
+  checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
 }
 
 rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
-  return _infer(input, false);
-}
-
-rust::Vec<OutputTensor> Engine::infer_with_sync(const rust::Vec<InputTensor> &input) {
-  return _infer(input, true);
-}
-
-rust::Vec<OutputTensor> Engine::_infer(const rust::Vec<InputTensor> &input, bool syncBeforeEnqueue) {
   // Create a map from tensor name to input data for easy lookup
   std::unordered_map<std::string, const InputTensor*> inputMap;
   for (const auto &tensorInput : input) {
@@ -373,41 +345,8 @@ rust::Vec<OutputTensor> Engine::_infer(const rust::Vec<InputTensor> &input, bool
                                       cudaMemcpyHostToDevice, mInferenceCudaStream));
   }
 
-  // No explicit sync needed here. Reasons:
-  //
-  // 1. CUDA stream ordering: all H2D copies above and enqueueV3 below are
-  //    submitted to the same stream (mInferenceCudaStream). CUDA guarantees
-  //    in-order execution within a stream, so the copies are complete before
-  //    any kernel dispatched by enqueueV3 begins.
-  //    https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html
-  //
-  // 2. Pageable host memory: tensorInput.data is a Rust Vec<u8> on the
-  //    regular heap (not cudaMallocHost pinned memory). CUDA documentation
-  //    states that cudaMemcpyAsync with pageable memory reverts to synchronous
-  //    behavior — the call already blocks the CPU until the copy is staged.
-  //    A subsequent cudaStreamSynchronize would be doubly redundant.
-  //    https://docs.nvidia.com/cuda/cuda-runtime-api/api-sync-behavior.html
-  //
-  // 3. Auxiliary streams: TensorRT may internally fan out to auxiliary streams
-  //    during enqueueV3 for parallel layer execution. Per TRT documentation,
-  //    TRT inserts event synchronizations so that all auxiliary streams wait
-  //    on the main stream at the start of enqueueV3, and the main stream waits
-  //    on all auxiliary streams at the end. Our H2D copies are therefore
-  //    visible to all TRT-internal work.
-  //    https://docs.nvidia.com/deeplearning/tensorrt/latest/performance/best-practices.html
-  //
-  // 4. CPU-side calls: setInputShape, allInputDimensionsSpecified, and
-  //    setTensorAddress are all pure CPU operations — no CUDA stream
-  //    interaction. setTensorAddress only registers a pointer; per TRT docs,
-  //    "data representing shape values is not copied until enqueueV3 is
-  //    invoked."
-  //    https://docs.nvidia.com/deeplearning/tensorrt/latest/api/migration-guide.html
-  //
-  // syncBeforeEnqueue=true re-introduces the sync for benchmarking purposes
-  // so callers can directly measure its cost.
-  if (syncBeforeEnqueue) {
-    checkCudaErrorCode(cudaStreamSynchronize(mInferenceCudaStream));
-  }
+  // No pre-enqueue sync needed: CUDA stream ordering guarantees H2D copies
+  // complete before enqueueV3 kernels begin. See README.md for details.
 
   // Ensure all dynamic bindings have been defined
   if (!mContext->allInputDimensionsSpecified()) {
@@ -448,11 +387,7 @@ rust::Vec<OutputTensor> Engine::_infer(const rust::Vec<InputTensor> &input, bool
     
     const auto outputLen = batchSize * mOutputLengths[outputIdx];
     
-    // Create output tensor. Use new_output_buffer() rather than the
-    // resize() push_back loop — resize() crosses the CXX FFI boundary
-    // once per byte, costing ~4ns each (~11ms for a 2.8MB FP32 output).
-    // new_output_buffer() does a single vec![0u8; n] on the Rust side:
-    // one allocation + one memset, then returns ownership across the boundary.
+    // Create output tensor with bulk-allocated buffer.
     OutputTensor output;
     size_t copySize = outputLen * metadata.dataTypeSize;
     output.name = metadata.name;

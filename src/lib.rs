@@ -98,10 +98,7 @@ pub mod ffi {
     }
 
     extern "Rust" {
-        /// Allocate a Vec<u8> of exactly `size` bytes on the Rust heap,
-        /// zero-initialized. Used by engine.cpp to bypass the per-element
-        /// push_back FFI loop in the resize() workaround, which costs ~4ns
-        /// per call and dominates inference latency for large outputs.
+        /// Allocate a zero-initialized Vec<u8> of `size` bytes on the Rust heap.
         fn new_output_buffer(size: usize) -> Vec<u8>;
     }
 
@@ -165,10 +162,6 @@ pub mod ffi {
         /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
         /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
         fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
-
-        /// Same as infer() but inserts a cudaStreamSynchronize between H2D copies
-        /// and enqueueV3. Only useful for benchmarking to measure the sync overhead.
-        fn infer_with_sync(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
     }
 }
 
