@@ -27,11 +27,11 @@ struct Args {
     device: u32,
 
     /// Warmup iterations (run before timing to stabilize GPU clocks)
-    #[arg(short, long, default_value_t = 200)]
+    #[arg(short, long, default_value_t = 200, value_parser = clap::value_parser!(usize).range(1..))]
     warmup: usize,
 
     /// Timed iterations per variant
-    #[arg(short, long, default_value_t = 1000)]
+    #[arg(short, long, default_value_t = 1000, value_parser = clap::value_parser!(usize).range(1..))]
     iterations: usize,
 }
 

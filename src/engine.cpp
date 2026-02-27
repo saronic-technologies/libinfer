@@ -275,11 +275,10 @@ void Engine::load() {
     }
   }
 
-  // Synchronize and destroy the temporary allocation stream.
-  // On any exception from the loop above, ensure stream is cleaned up.
-  auto syncAndDestroy = [&]() {
+  // Synchronize the temporary allocation stream (with error checking),
+  // then destroy it. On any exception, ensure the stream is cleaned up.
+  auto destroyStream = [&]() {
     if (stream) {
-      cudaStreamSynchronize(stream);
       cudaStreamDestroy(stream);
       stream = nullptr;
     }
@@ -287,10 +286,10 @@ void Engine::load() {
   try {
     checkCudaErrorCode(cudaStreamSynchronize(stream));
   } catch (...) {
-    syncAndDestroy();
+    destroyStream();
     throw;
   }
-  syncAndDestroy();
+  destroyStream();
 }
 
 rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
