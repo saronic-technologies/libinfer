@@ -60,4 +60,3 @@ path = "examples/functional_test.rs"
 name = "onnx_tensorrt_compare"
 path = "examples/onnx_tensorrt_compare.rs"
 
-
