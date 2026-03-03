@@ -84,6 +84,16 @@ pub mod ffi {
     }
 
     #[derive(Debug, Clone)]
+    /// Per-input shape profile from TensorRT optimization profile.
+    struct InputShapeProfile {
+        name: String,
+        has_dynamic_shape: bool,
+        min_shape: Vec<i32>,
+        opt_shape: Vec<i32>,
+        max_shape: Vec<i32>,
+    }
+
+    #[derive(Debug, Clone)]
     /// Options for creating the inference engine.
     struct Options {
         /// Full path to the TensorRT engine file to load.
@@ -120,9 +130,9 @@ pub mod ffi {
         /// A vector of TensorInfo containing name and dimensions for each input tensor.
         fn get_input_dims(self: &Engine) -> Vec<TensorInfo>;
 
-        /// Return the minimum, optimized, and maximum batch dimension for this engine.
-        /// This is an internal function used by `get_batch_dims`.
-        fn _get_batch_dims(self: &Engine) -> Vec<u32>;
+        /// Return per-input shape profiles (min/opt/max) from the TensorRT optimization profile.
+        /// This is an internal function used by `get_input_shape_profiles`.
+        fn _get_input_shape_profiles(self: &Engine) -> Vec<InputShapeProfile>;
 
         /// Return output dimensions of all output tensors, not including batch dimension.
         ///
@@ -130,37 +140,25 @@ pub mod ffi {
         /// A vector of TensorInfo containing name and dimensions for each output tensor.
         fn get_output_dims(self: &Engine) -> Vec<TensorInfo>;
 
-        /// Return the expected length of the output feature vector.
-        ///
-        /// # Returns
-        /// The total number of elements in the output tensor, equivalent to
-        /// multiplying all elements of `get_output_dims`.
-        fn get_output_len(self: &Engine) -> u32;
-
         /// Get the number of input tensors.
         fn get_num_inputs(self: &Engine) -> usize;
 
         /// Get the number of output tensors.
         fn get_num_outputs(self: &Engine) -> usize;
 
-        /// Run inference on an input batch.
+        /// Run inference on the provided input tensors.
         ///
         /// # Arguments
-        /// * `input` - A flattened vector representing the input tensor data
+        /// * `input` - Named input tensors with flattened data bytes
         ///
         /// # Returns
-        /// A Result containing either the output tensor data as a vector of f32 values,
-        /// or an error message if inference failed.
+        /// A Result containing the output tensors or an error message.
         ///
         /// # Details
-        /// The input batch dimension is dependent on whether the engine has been built with fixed
-        /// or dynamic input batch sizes. If fixed, the input batch dimensions
-        /// must match the value returned by `get_input_dims`. Dynamic may accept any input batch size
-        /// within the range specified by `get_batch_dims`.
-        ///
-        /// The input vector must be a flattened representation of shape
-        /// `get_input_dims` with appropriate batch dimension. Likewise, the output dimension will
-        /// be of shape `get_output_dims` with batch dimension equal to input batch dimension.
+        /// Each input tensor's batch size is resolved independently from its data size.
+        /// For dynamic inputs, the batch dimension must fall within the range specified
+        /// by `get_input_shape_profiles`. For static inputs, the data size must match
+        /// the fixed shape exactly. Different inputs may have different batch sizes.
         fn infer(self: Pin<&mut Engine>, input: &Vec<InputTensor>) -> Result<Vec<OutputTensor>>;
     }
 }
@@ -173,11 +171,14 @@ pub use crate::ffi::{
     TensorInfo,
     InputTensor,
     OutputTensor,
+    InputShapeProfile,
 };
 
 use cxx::{Exception, UniquePtr};
 
-/// Represents the batch dimensions supported by a TensorRT engine
+/// Represents the batch dimensions supported by a TensorRT engine.
+///
+/// Deprecated: Use `get_input_shape_profiles()` for per-input profiles.
 #[derive(Debug, Clone)]
 pub struct BatchDims {
     /// Minimum supported batch size
@@ -186,6 +187,21 @@ pub struct BatchDims {
     pub opt: u32,
     /// Maximum supported batch size
     pub max: u32,
+}
+
+/// Per-input shape profile from a TensorRT optimization profile.
+#[derive(Debug, Clone)]
+pub struct ShapeProfile {
+    /// Name of the input tensor
+    pub name: String,
+    /// Whether this input has any dynamic dimensions
+    pub has_dynamic_shape: bool,
+    /// Minimum shape (full dims including batch) from the optimization profile
+    pub min_shape: Vec<i32>,
+    /// Optimal shape (full dims including batch) from the optimization profile
+    pub opt_shape: Vec<i32>,
+    /// Maximum shape (full dims including batch) from the optimization profile
+    pub max_shape: Vec<i32>,
 }
 
 impl Engine {
@@ -200,22 +216,41 @@ impl Engine {
         crate::ffi::load_engine(&options)
     }
 
+    /// Get shape profiles for all input tensors.
+    ///
+    /// Each input tensor has its own min/opt/max shape from the TensorRT
+    /// optimization profile. For static inputs, min == opt == max.
+    /// For dynamic inputs, the shapes represent the valid range.
+    pub fn get_input_shape_profiles(&self) -> Vec<ShapeProfile> {
+        self._get_input_shape_profiles()
+            .into_iter()
+            .map(|p| ShapeProfile {
+                name: p.name,
+                has_dynamic_shape: p.has_dynamic_shape,
+                min_shape: p.min_shape,
+                opt_shape: p.opt_shape,
+                max_shape: p.max_shape,
+            })
+            .collect()
+    }
+
     /// Get the batch dimension constraints for this engine.
     ///
-    /// # Returns
-    /// A `BatchDims` struct containing the minimum, optimal, and maximum
-    /// batch sizes supported by this engine.
-    ///
-    /// For fixed-batch engines, all values will typically be the same.
-    /// For dynamic-batch engines, these values represent the valid range
-    /// of batch sizes that can be used.
-    pub fn get_batch_dims(self: &Engine) -> BatchDims {
-        let vs = self._get_batch_dims();
-        BatchDims {
-            min: vs[0],
-            opt: vs[1],
-            max: vs[2],
+    /// Deprecated: Use `get_input_shape_profiles()` for per-input profiles.
+    /// This returns the profile of the first dynamic input's first dimension,
+    /// or (1, 1, 1) if no inputs are dynamic.
+    pub fn get_batch_dims(&self) -> BatchDims {
+        let profiles = self._get_input_shape_profiles();
+        for p in &profiles {
+            if p.has_dynamic_shape {
+                return BatchDims {
+                    min: p.min_shape[0] as u32,
+                    opt: p.opt_shape[0] as u32,
+                    max: p.max_shape[0] as u32,
+                };
+            }
         }
+        BatchDims { min: 1, opt: 1, max: 1 }
     }
 }
 
