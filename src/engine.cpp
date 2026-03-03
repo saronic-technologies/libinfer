@@ -477,10 +477,6 @@ rust::Vec<InputShapeProfile> Engine::_get_input_shape_profiles() const {
     profile.name = metadata.name;
     profile.has_dynamic_shape = metadata.hasDynamicShape;
 
-    resize(profile.min_shape, 0);
-    resize(profile.opt_shape, 0);
-    resize(profile.max_shape, 0);
-
     for (int j = 0; j < metadata.minShape.nbDims; ++j) {
       profile.min_shape.push_back(static_cast<int32_t>(metadata.minShape.d[j]));
     }

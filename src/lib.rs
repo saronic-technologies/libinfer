@@ -241,16 +241,18 @@ impl Engine {
     /// or (1, 1, 1) if no inputs are dynamic.
     pub fn get_batch_dims(&self) -> BatchDims {
         let profiles = self._get_input_shape_profiles();
-        for p in &profiles {
-            if p.has_dynamic_shape {
-                return BatchDims {
-                    min: p.min_shape[0] as u32,
-                    opt: p.opt_shape[0] as u32,
-                    max: p.max_shape[0] as u32,
-                };
-            }
+        // Prefer the first dynamic input's d[0], but fall back to the first
+        // input's d[0] for fully-static engines (where min == opt == max).
+        let first_dynamic = profiles.iter().find(|p| p.has_dynamic_shape);
+        let p = first_dynamic.or_else(|| profiles.first());
+        match p {
+            Some(p) => BatchDims {
+                min: p.min_shape[0] as u32,
+                opt: p.opt_shape[0] as u32,
+                max: p.max_shape[0] as u32,
+            },
+            None => BatchDims { min: 1, opt: 1, max: 1 },
         }
-        BatchDims { min: 1, opt: 1, max: 1 }
     }
 }
 
