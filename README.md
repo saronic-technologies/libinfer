@@ -15,40 +15,57 @@ To use this library, you'll need:
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-libinfer = "0.0.3"
+libinfer = "0.0.5"
 ```
 
 ## Usage
 The goal of the API is to keep as much processing in Rust land as possible. Here is a sample usage:
 
 ```rust
+use libinfer::{Engine, Options, InputTensor, TensorDataType};
+
 let options = Options {
-    path: "yolov8n.engine".into(),
+    path: "model.engine".into(),
     device_index: 0,
 };
 let mut engine = Engine::new(&options).unwrap();
 
-// Get input dimensions of the engine as [Channels, Height, Width]
-let dims = engine.get_input_dims();
+// Query per-input shape profiles (includes batch dimension)
+let profiles = engine.get_input_shape_profiles();
+let input_infos = engine.get_input_dims(); // dims without batch
 
-// Construct a dummy input (uint8 or float32 depending on model)
-let input_size = dims.iter().fold(1, |acc, &e| acc * e as usize);
-let input = InputTensor {
-    name: "input".to_string();
-    data: vec![0u8; input_size];
+// Construct inputs using each input's optimal shape
+let input_tensors: Vec<InputTensor> = profiles.iter().zip(input_infos.iter()).map(|(profile, info)| {
+    let shape = &profile.opt_shape;
+    let dtype_size = match info.dtype {
+        TensorDataType::FP32 => 4,
+        TensorDataType::UINT8 | TensorDataType::BOOL => 1,
+        TensorDataType::INT64 => 8,
+        _ => 1,
+    };
+    let byte_count: usize = shape.iter().map(|&d| d as usize).product::<usize>() * dtype_size;
+    InputTensor {
+        name: info.name.clone(),
+        data: vec![0u8; byte_count],
+        dtype: info.dtype.clone(),
+    }
+}).collect();
 
 // Run inference
-let output = engine.pin_mut().infer(&input).unwrap();
+let outputs = engine.pin_mut().infer(&input_tensors).unwrap();
 
-// Postprocess the output according to your model's output format
-// ...
+// Process outputs
+for output in &outputs {
+    println!("Output '{}': {} bytes", output.name, output.data.len());
+}
 ```
 
 This library is intended to be used with pre-built TensorRT engines created by the Python API or the `trtexec` CLI tool for the target device.
 
 ## Features
-- Support for both fixed and dynamic batch sizes
-- Automatic handling of different input data types (UINT8, FP32)
+- Heterogeneous per-input dynamic shapes — each input tensor can have its own independent dynamic dimension
+- Per-input shape profiles (`get_input_shape_profiles()`) exposing min/opt/max shapes from the TensorRT optimization profile
+- Support for UINT8, FP32, INT64, and BOOL input data types
 - Direct access to model dimensions and parameters
 - Error handling via Rust's `Result` type
 - Logging integration with `RUST_LOG` environment variable
@@ -56,8 +73,8 @@ This library is intended to be used with pre-built TensorRT engines created by t
 ## Examples
 Check the `examples/` directory for working examples:
 - `basic.rs`: Simple inference example
-- `benchmark.rs`: Performance benchmarking with various batch sizes
-- `dynamic.rs`: Working with dynamic batch sizes
+- `benchmark.rs`: Performance benchmarking with per-input shape profiling (tests min/opt/max automatically)
+- `dynamic.rs`: Working with heterogeneous per-input dynamic shapes
 - `functional_test.rs`: Testing correctness of model outputs
 
 Run an example with:
@@ -87,6 +104,7 @@ No `cudaStreamSynchronize` is needed between H2D copies and `enqueueV3`. This is
 A post-inference `cudaStreamSynchronize` is still required to ensure D2H output copies are complete before reading results. `infer()` handles this internally.
 
 ## Current Limitations
+- Each input tensor supports at most one dynamic dimension (batch). Multiple dynamic dims per input would require explicit shape specification.
 - The underlying engine code is not threadsafe (and the Rust binding does not implement `Sync`)
 - Engine instances are `Send` but not `Sync`
 - Input and output data transfers happen on the CPU-GPU boundary
