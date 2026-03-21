@@ -1,6 +1,6 @@
 [package]
 name = "libinfer"
-version = "0.0.5"
+version = "0.1.0"
 edition = "2021"
 description = "Rust interface to TensorRT for high-performance GPU inference"
 authors = ["Saronic Technologies"]
@@ -10,15 +10,18 @@ documentation = "https://docs.rs/libinfer"
 readme = "README.md"
 keywords = ["tensorrt", "inference", "machine-learning", "gpu", "cuda"]
 categories = ["api-bindings", "science"]
-exclude = [
-    "test/*",
-]
+exclude = ["test/*"]
 
 [lib]
 name = "libinfer"
 
 [dependencies]
 cxx = "1.0.116"
+cudarc = { version = "0.19", default-features = false, features = [
+  "driver",
+  "dynamic-linking",
+  "cuda-12080",
+] }
 
 [build-dependencies]
 cmake = "0.1.50"
@@ -31,10 +34,7 @@ approx = "0.5.1"
 clap = { version = "4.5.27", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-ort = { version = "=2.0.0-rc.10", features = ["cuda", "tensorrt"]}
-base64ct = "=1.7.3"
 rand = "0.8.5"
-ndarray = "0.15"
 
 [package.metadata.docs.rs]
 features = ["doc-only"]
@@ -55,8 +55,3 @@ path = "examples/dynamic.rs"
 [[example]]
 name = "functional_test"
 path = "examples/functional_test.rs"
-
-[[example]]
-name = "onnx_tensorrt_compare"
-path = "examples/onnx_tensorrt_compare.rs"
-

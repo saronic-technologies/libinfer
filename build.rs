@@ -1,6 +1,5 @@
 use std::env;
 
-// This is evil ground. Tread carefully.
 fn main() {
     let trt_libs = env::var("TENSORRT_LIBRARIES").expect("TENSORRT_LIBRARIES not set");
     let cuda_libs = env::var("CUDA_LIBRARIES").expect("CUDA_LIBRARIES not set");
@@ -20,10 +19,8 @@ fn main() {
         .flag("-Wall")
         .define("SPDLOG_FMT_EXTERNAL", Some("1"));
 
-    // Use clang instead of gcc to avoid stdlib.h path issues
     builder.compiler("clang++");
 
-    // Add system include paths if they exist in environment
     if let Ok(cplus_include_path) = env::var("CPLUS_INCLUDE_PATH") {
         for path in cplus_include_path.split(':') {
             if !path.is_empty() {
@@ -39,12 +36,7 @@ fn main() {
         }
     }
 
-    // Try to add common system paths explicitly
-    let potential_paths = [
-        "/usr/include",
-        "/usr/local/include",
-    ];
-    
+    let potential_paths = ["/usr/include", "/usr/local/include"];
     for path in &potential_paths {
         if std::path::Path::new(path).exists() {
             builder.include(path);
@@ -61,5 +53,5 @@ fn main() {
     println!("cargo:rustc-link-lib=nvonnxparser");
 
     println!("cargo:rerun-if-changed=src/engine.cpp");
-    println!("cargo:rerun-if-changed=include/engine.h");
+    println!("cargo:rerun-if-changed=src/engine.h");
 }

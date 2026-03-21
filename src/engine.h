@@ -1,20 +1,17 @@
 #pragma once
 
 #include "NvInfer.h"
-#include <chrono>
-#include <cstdlib>
-#include <vector>
 #include <cuda_runtime.h>
-#include <fstream>
+#include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
+#include <string>
+#include <vector>
 
 #include "rust/cxx.h"
 
 struct Options;
 struct TensorInfo;
-struct InputTensor;
-struct OutputTensor;
 enum class TensorDataType : uint8_t;
 
 class Logger : public nvinfer1::ILogger {
@@ -22,20 +19,18 @@ public:
   nvinfer1::ILogger::Severity reportableSeverity;
 
   explicit Logger() {
-    const char *rustLogLevelEnvVar = "RUST_LOG";
-    const char *rustLogLevel = getenv(rustLogLevelEnvVar);
+    const char *rustLogLevel = getenv("RUST_LOG");
     if (rustLogLevel == nullptr) {
       reportableSeverity = nvinfer1::ILogger::Severity::kWARNING;
     } else {
-
-      std::string rustLogLevelStr(rustLogLevel);
-      if (rustLogLevelStr == "error") {
+      std::string level(rustLogLevel);
+      if (level == "error") {
         reportableSeverity = nvinfer1::ILogger::Severity::kERROR;
-      } else if (rustLogLevelStr == "warn") {
+      } else if (level == "warn") {
         reportableSeverity = nvinfer1::ILogger::Severity::kWARNING;
-      } else if (rustLogLevelStr == "info") {
+      } else if (level == "info") {
         reportableSeverity = nvinfer1::ILogger::Severity::kINFO;
-      } else if (rustLogLevelStr == "debug" || rustLogLevelStr == "trace") {
+      } else if (level == "debug" || level == "trace") {
         reportableSeverity = nvinfer1::ILogger::Severity::kVERBOSE;
       }
     }
@@ -69,37 +64,29 @@ public:
 class Engine {
 public:
   Engine(const Options &options);
-  ~Engine();
+  ~Engine() = default;
 
-  // Load and prepare the network for inference.
   void load();
 
-  // Run inference and return output tensors.
-  rust::Vec<OutputTensor> infer(const rust::Vec<InputTensor> &input);
+  // Enqueue inference with caller-provided device pointers and stream.
+  // Synchronizes the stream before returning.
+  void infer(const uint64_t *input_ptrs, size_t num_inputs,
+             const uint64_t *output_ptrs, size_t num_outputs,
+             uint64_t stream, uint32_t batch_size);
 
-  // Get dimensions for all input tensors
+  // Same as infer() but does not synchronize. Caller is responsible.
+  void infer_async(const uint64_t *input_ptrs, size_t num_inputs,
+                   const uint64_t *output_ptrs, size_t num_outputs,
+                   uint64_t stream, uint32_t batch_size);
+
   rust::Vec<TensorInfo> get_input_dims() const;
-
-  rust::Vec<uint32_t> _get_batch_dims() const {
-    rust::Vec<uint32_t> rv;
-    rv.push_back(mMinBatchSize);
-    rv.push_back(mOptBatchSize);
-    rv.push_back(mMaxBatchSize);
-    return rv;
-  }
-
-  // Get dimensions for all output tensors
   rust::Vec<TensorInfo> get_output_dims() const;
-
-  uint32_t get_output_len() const { return mOutputLengths.empty() ? 0 : mOutputLengths[0]; }
-
-  // New methods for multi-tensor support
+  rust::Vec<uint32_t> _get_batch_dims() const;
+  uint32_t get_output_len() const;
   size_t get_num_inputs() const;
   size_t get_num_outputs() const;
 
 private:
-
-  // Tensor metadata stored at construction time
   struct TensorMetadata {
     std::string name;
     nvinfer1::TensorIOMode ioMode;
@@ -108,30 +95,23 @@ private:
     nvinfer1::Dims dims;
   };
 
-  // Holds pointers to the input and output GPU buffers
-  std::vector<void *> mBuffers;
-  std::vector<uint32_t> mOutputLengths{};
-  std::vector<nvinfer1::Dims> mInputDims;
-  std::vector<nvinfer1::Dims> mOutputDims;
-  std::vector<std::string> mIOTensorNames;
-  std::vector<TensorMetadata> mTensorMetadata; // Cached tensor metadata
-  int32_t mMinBatchSize;
-  int32_t mOptBatchSize;
-  int32_t mMaxBatchSize;
+  void enqueue(const uint64_t *input_ptrs, size_t num_inputs,
+               const uint64_t *output_ptrs, size_t num_outputs,
+               cudaStream_t stream, uint32_t batch_size);
 
-  // Must keep IRuntime around for inference, see:
-  // https://forums.developer.nvidia.com/t/is-it-safe-to-deallocate-nvinfer1-iruntime-after-creating-an-nvinfer1-icudaengine-but-before-running-inference-with-said-icudaengine/255381/2?u=cyruspk4w6
-  std::unique_ptr<nvinfer1::IRuntime> mRuntime = nullptr;
-  std::unique_ptr<nvinfer1::ICudaEngine> mEngine = nullptr;
-  std::unique_ptr<nvinfer1::IExecutionContext> mContext = nullptr;
+  std::vector<TensorMetadata> mTensorMetadata;
+  std::vector<uint32_t> mOutputLengths;
+  int32_t mMinBatchSize = 0;
+  int32_t mOptBatchSize = 0;
+  int32_t mMaxBatchSize = 0;
+
+  std::unique_ptr<nvinfer1::IRuntime> mRuntime;
+  std::unique_ptr<nvinfer1::ICudaEngine> mEngine;
+  std::unique_ptr<nvinfer1::IExecutionContext> mContext;
   Logger mLogger;
 
-  cudaStream_t mInferenceCudaStream = nullptr;
-
-  // Options values.
   const std::string kEnginePath;
-  const uint32_t kDeviceIndex; 
+  const uint32_t kDeviceIndex;
 };
 
-// Rust friends.
 std::unique_ptr<Engine> load_engine(const Options &options);

@@ -1,209 +1,40 @@
-//! # Functional Test Example
-//!
-//! Validates the correct functionality of a TensorRT engine by checking:
-//! - Input dimensions
-//! - Output dimensions
-//! - Batch dimensions
-//! - Output values against expected reference values
+//! Validates correct functionality of a TensorRT engine by checking
+//! output values against expected reference values.
 //!
 //! ## Usage
 //! ```bash
 //! cargo run --example functional_test -- --path /path/to/test/directory
 //! ```
 //!
-//! ## Required Test Files
-//! This example requires the following files in your test directory:
-//! - `yolov8n.engine`: The TensorRT engine file to test (or specify direct path to engine)
-//! - `input.bin`: A binary file containing raw input data matching the model's input format
-//! - `features.txt`: A text file with expected output values (space-separated floats)
-//!
-//! ## Note
-//! You must provide your own engine file and corresponding test data. The test assumes
-//! a YOLOv8n model by default, but the code can be adapted for any model architecture.
+//! Required test files: yolov8n.engine, input.bin, features.txt
 
-use anyhow::Result;
 use approx::assert_relative_eq;
 use clap::Parser;
-use cxx::UniquePtr;
+use cudarc::driver::{CudaContext, DevicePtr, DevicePtrMut};
 use libinfer::{Engine, Options};
-use libinfer::ffi::InputTensor;
-use std::{
-    fs::File,
-    io::{BufRead, BufReader, Read},
-    iter::{repeat, zip},
-    path::PathBuf,
-    str::FromStr,
-};
-use tracing::{info, error, Level};
-use tracing_subscriber::{FmtSubscriber, EnvFilter};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
+use std::iter::zip;
+use std::path::PathBuf;
+use std::str::FromStr;
+use tracing::{error, info, Level};
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[derive(Parser, Debug)]
 struct Args {
-    /// Path to the directory containing engine files.
     #[arg(short, long, value_name = "PATH", default_value = ".", value_parser)]
     path: PathBuf,
-
-    /// Number of iterations (default: 32768)
-    #[arg(short, long, value_name = "ITERATIONS", default_value_t = 1 << 15)]
-    iterations: usize,
-}
-
-fn read_binary_file(path: PathBuf) -> Result<Vec<u8>> {
-    let mut file = File::open(path)?;
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    Ok(buffer)
-}
-
-fn parse_file_to_float_vec(path: PathBuf) -> Result<Vec<f32>> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-
-    let mut float_vec = Vec::new();
-
-    for line in reader.lines() {
-        let line = line?;
-        let values: Vec<f32> = line
-            .split_whitespace()
-            .filter_map(|s| f32::from_str(s).ok())
-            .collect();
-
-        float_vec.extend(values);
-    }
-    Ok(float_vec)
-}
-
-fn test_input_dim(engine: &UniquePtr<Engine>) {
-    let input_dims = engine.get_input_dims();
-    assert_eq!(input_dims.len(), 1); // Expecting one input tensor
-    let input_dim = &input_dims[0];
-    assert_eq!(input_dim.dims[0], 3);
-    assert_eq!(input_dim.dims[1], 640);
-    assert_eq!(input_dim.dims[2], 640);
-    info!("Input dimensions: '{}' -> {:?}", input_dim.name, input_dim.dims);
-}
-
-fn test_batch_dim(engine: &UniquePtr<Engine>) {
-    let batch_dim = engine.get_batch_dims();
-    assert_eq!(batch_dim.min, 1);
-    assert_eq!(batch_dim.opt, 1);
-    assert_eq!(batch_dim.max, 1);
-    info!("Batch dimensions: {batch_dim:?}");
-}
-
-fn test_output_dim(engine: &UniquePtr<Engine>) {
-    let output_dims = engine.get_output_dims();
-    assert_eq!(output_dims.len(), 1); // Expecting one output tensor
-    let output_dim = &output_dims[0];
-    assert_eq!(output_dim.dims[0], 84);
-    assert_eq!(output_dim.dims[1], 8400);
-    info!("Output dimensions: '{}' -> {:?}", output_dim.name, output_dim.dims);
-}
-
-fn test_output_features(engine: &mut UniquePtr<Engine>, input: &[u8], expected: &[f32]) {
-    info!("Testing output features...");
-    let batch_size = engine.get_batch_dims().opt;
-    
-    // Create TensorInput for the first input tensor
-    let ext_input_data = {
-        if batch_size > 1 {
-            // Repeat the input data for each batch
-            repeat(input)
-                .take(batch_size as usize)
-                .flat_map(|v| v.iter().cloned())
-                .collect()
-        } else {
-            input.to_vec()
-        }
-    };
-
-    let input_dims = engine.get_input_dims();
-    let input_tensors = vec![InputTensor {
-        name: input_dims[0].name.clone(),
-        data: ext_input_data,
-        dtype: input_dims[0].dtype.clone(),
-    }];
-
-    let output_dims = engine.get_output_dims();
-    let batch_element_size = output_dims[0]
-        .dims
-        .iter()
-        .fold(1, |acc, &e| acc * e as usize);
-    let expected_output_size = batch_element_size * batch_size as usize;
-
-    let output_tensors = engine.pin_mut().infer(&input_tensors).unwrap();
-    
-    // Get the first output tensor and convert based on data type
-    let output = &output_tensors[0];
-    let actual_f32: Vec<f32> = {
-        // Check if data length suggests actual type differs from declared type
-        let expected_elements = batch_element_size * batch_size as usize;
-        let bytes_per_element = output.data.len() / expected_elements;
-        
-        info!("Detected {} bytes per element (raw_len={}, expected_elements={})", 
-              bytes_per_element, output.data.len(), expected_elements);
-              
-        match bytes_per_element {
-            4 => {
-                // 4 bytes per element = FP32, regardless of declared type
-                output.data
-                    .chunks_exact(4)
-                    .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                    .collect()
-            }
-            1 => {
-                // 1 byte per element = UINT8 or BOOL
-                match output.dtype {
-                    libinfer::TensorDataType::BOOL => {
-                        output.data.iter().map(|&b| if b != 0 { 1.0 } else { 0.0 }).collect()
-                    }
-                    _ => {
-                        output.data.iter().map(|&b| b as f32).collect()
-                    }
-                }
-            }
-            8 => {
-                // 8 bytes per element = INT64
-                output.data
-                    .chunks_exact(8)
-                    .map(|bytes| i64::from_le_bytes([
-                        bytes[0], bytes[1], bytes[2], bytes[3],
-                        bytes[4], bytes[5], bytes[6], bytes[7]
-                    ]) as f32)
-                    .collect()
-            }
-            _ => panic!("Unexpected bytes per element: {} (declared type: {:?})", bytes_per_element, output.dtype),
-        }
-    };
-
-    // Check that the entire output length is correct.
-    info!("Output validation: actual_f32.len()={}, expected_output_size={}, batch_size={}, batch_element_size={}", 
-          actual_f32.len(), expected_output_size, batch_size, batch_element_size);
-    info!("Output tensor dtype: {:?}, raw data len: {}", output.dtype, output.data.len());
-    assert_eq!(actual_f32.len(), expected_output_size);
-
-    // Only checking the first twelve produced values. Repeat for each batch element.
-    actual_f32.chunks_exact(batch_element_size).for_each(|chunk| {
-        zip(chunk, expected).for_each(|(a, e)| {
-            assert_relative_eq!(*a, e, epsilon = 0.1);
-        });
-    });
-
-    info!("Output features agree");
 }
 
 fn main() {
-    // Initialize tracing subscriber for logging
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(EnvFilter::from_default_env())
         .with_max_level(Level::INFO)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
 
     let args = Args::parse();
 
-    // Check if path is directly to an engine file
     let engine_path = if args.path.is_file() {
         args.path.clone()
     } else {
@@ -215,30 +46,85 @@ fn main() {
         device_index: 0,
     };
 
-    let mut engine = match Engine::new(&options) {
-        Ok(engine) => engine,
-        Err(e) => {
-            error!("Failed to load engine: {e}");
-            std::process::exit(1);
-        }
+    let mut engine = Engine::new(&options).unwrap_or_else(|e| {
+        error!("Failed to load engine: {e}");
+        std::process::exit(1);
+    });
+
+    let input_infos = engine.get_input_dims();
+    let output_infos = engine.get_output_dims();
+    let batch_dims = engine.get_batch_dims();
+    let batch_size = batch_dims.opt;
+
+    assert_eq!(input_infos.len(), 1);
+    assert_eq!(input_infos[0].dims, &[3, 640, 640]);
+    info!("Input: '{}' {:?}", input_infos[0].name, input_infos[0].dims);
+
+    assert_eq!(output_infos.len(), 1);
+    assert_eq!(output_infos[0].dims, &[84, 8400]);
+    info!(
+        "Output: '{}' {:?}",
+        output_infos[0].name, output_infos[0].dims
+    );
+
+    assert_eq!(batch_dims.min, 1);
+    assert_eq!(batch_dims.opt, 1);
+    assert_eq!(batch_dims.max, 1);
+
+    let host_input = {
+        let mut file = File::open(args.path.join("input.bin")).expect("failed to open input.bin");
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)
+            .expect("failed to read input.bin");
+        buf
     };
 
-    let input = read_binary_file(args.path.join("input.bin")).unwrap_or_else(|e| {
-        error!("Failed to read input.bin: {e}");
-        std::process::exit(1);
-    });
-    let expected = parse_file_to_float_vec(args.path.join("features.txt")).unwrap_or_else(|e| {
-        error!("Failed to parse features.txt: {e}");
-        std::process::exit(1);
-    });
+    let expected: Vec<f32> = {
+        let file = File::open(args.path.join("features.txt")).expect("failed to open features.txt");
+        BufReader::new(file)
+            .lines()
+            .flat_map(|line| {
+                line.unwrap()
+                    .split_whitespace()
+                    .filter_map(|s| f32::from_str(s).ok())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
 
-    let input_dims = engine.get_input_dims();
-    if !input_dims.is_empty() {
-        info!("Input data types: {:?}", input_dims.iter().map(|t| (&t.name, &t.dtype)).collect::<Vec<_>>());
+    let ctx = CudaContext::new(0).expect("failed to create CUDA context");
+    unsafe { ctx.disable_event_tracking() };
+    let stream = ctx.new_stream().expect("failed to create stream");
+
+    let input_buf = stream.clone_htod(&host_input).expect("H2D failed");
+    let mut output_buf = stream
+        .alloc_zeros::<u8>(output_infos[0].byte_size() * batch_size as usize)
+        .expect("alloc failed");
+
+    {
+        let (input_ptr, _ig) = input_buf.device_ptr(&stream);
+        let (output_ptr, _og) = output_buf.device_ptr_mut(&stream);
+
+        engine
+            .infer(&[input_ptr], &[output_ptr], stream.cu_stream(), batch_size)
+            .expect("inference failed");
     }
 
-    test_input_dim(&engine);
-    test_output_dim(&engine);
-    test_batch_dim(&engine);
-    test_output_features(&mut engine, &input, &expected);
+    let host_output: Vec<u8> = stream.clone_dtoh(&output_buf).expect("D2H failed");
+
+    let actual_f32: Vec<f32> = host_output
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect();
+
+    let output_elems = output_infos[0].elem_count();
+    assert_eq!(actual_f32.len(), output_elems * batch_size as usize);
+
+    actual_f32.chunks_exact(output_elems).for_each(|chunk| {
+        zip(chunk, &expected).for_each(|(a, e)| {
+            assert_relative_eq!(*a, e, epsilon = 0.1);
+        });
+    });
+
+    info!("Output features agree");
 }
