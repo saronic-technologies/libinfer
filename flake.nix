@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     flake-utils.url = "github:numtide/flake-utils";
     jetpack-nixos.url = "github:anduril/jetpack-nixos";
   };
@@ -13,8 +13,8 @@
     in
     flake-utils.lib.eachSystem supported-systems (system:
       let
-        pkgs = import nixpkgs { 
-          inherit system; 
+        pkgs = import nixpkgs {
+          inherit system;
           config.allowUnfree = true;
         };
         cudaPackages = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages else pkgs.cudaPackages;
@@ -72,7 +72,7 @@
               export CC="clang"
               export CXX="clang++"
             '';
-            
+
           };
         };
       });
