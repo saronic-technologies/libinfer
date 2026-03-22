@@ -62,7 +62,7 @@ std::unique_ptr<Engine> load_engine(const Options &options) {
 }
 
 Engine::Engine(const Options &options)
-    : kEnginePath(options.path), kDeviceIndex(options.device_index) {
+    : kEnginePath(options.path) {
   if (!spdlog::get("libinfer")) {
     spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
     spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
@@ -109,16 +109,8 @@ void Engine::load() {
     throw std::runtime_error("Runtime not initialized");
   }
 
-  const auto ret = cudaSetDevice(kDeviceIndex);
-  if (ret != 0) {
-    int numGPUs;
-    cudaGetDeviceCount(&numGPUs);
-    throw std::runtime_error(
-        "Unable to set GPU device index to: " + std::to_string(kDeviceIndex) +
-        ". Note, your device has " + std::to_string(numGPUs) +
-        " CUDA-capable GPU(s).");
-  }
-
+  // Caller is responsible for setting the CUDA device via CudaContext
+  // before constructing the engine.
   mEngine = std::unique_ptr<ICudaEngine>(
       mRuntime->deserializeCudaEngine(buffer.data(), buffer.size()));
   if (!mEngine) {

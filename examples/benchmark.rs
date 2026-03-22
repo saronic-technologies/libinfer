@@ -9,8 +9,10 @@ use clap::Parser;
 use cudarc::driver::{CudaContext, DevicePtr, DevicePtrMut};
 use libinfer::{Engine, Options};
 use std::path::PathBuf;
+use std::process;
 use std::time::{Duration, Instant};
 use tracing::{error, info, Level};
+use tracing::subscriber::set_global_default;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[derive(Parser, Debug)]
@@ -30,32 +32,32 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .with_max_level(Level::INFO)
         .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
+    set_global_default(subscriber).expect("Failed to set tracing subscriber");
 
     let args = Args::parse();
 
     if !args.path.is_file() {
         error!("Engine file not found: {}", args.path.display());
-        std::process::exit(1);
+        process::exit(1);
     }
 
     info!("Loading engine from {}", args.path.display());
+    let ctx = CudaContext::new(args.device as usize).expect("failed to create CUDA context");
+    unsafe { ctx.disable_event_tracking() };
+
     let options = Options {
         path: args.path.to_string_lossy().to_string(),
-        device_index: args.device,
     };
 
-    let mut engine = Engine::new(&options).unwrap_or_else(|e| {
+    let mut engine = Engine::new(&options, &ctx).unwrap_or_else(|e| {
         error!("Failed to load engine: {e}");
-        std::process::exit(1);
+        process::exit(1);
     });
 
     let input_infos = engine.get_input_dims();
     let output_infos = engine.get_output_dims();
     let batch_size = engine.get_batch_dims().opt;
 
-    let ctx = CudaContext::new(args.device as usize).expect("failed to create CUDA context");
-    unsafe { ctx.disable_event_tracking() };
     let stream = ctx.new_stream().expect("failed to create stream");
 
     let input_bufs: Vec<_> = input_infos

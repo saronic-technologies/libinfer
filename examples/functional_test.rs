@@ -16,8 +16,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::iter::zip;
 use std::path::PathBuf;
+use std::process;
 use std::str::FromStr;
 use tracing::{error, info, Level};
+use tracing::subscriber::set_global_default;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[derive(Parser, Debug)]
@@ -31,7 +33,7 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .with_max_level(Level::INFO)
         .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
+    set_global_default(subscriber).expect("Failed to set tracing subscriber");
 
     let args = Args::parse();
 
@@ -41,14 +43,16 @@ fn main() {
         args.path.join("yolov8n.engine")
     };
 
+    let ctx = CudaContext::new(0).expect("failed to create CUDA context");
+    unsafe { ctx.disable_event_tracking() };
+
     let options = Options {
         path: engine_path.to_string_lossy().to_string(),
-        device_index: 0,
     };
 
-    let mut engine = Engine::new(&options).unwrap_or_else(|e| {
+    let mut engine = Engine::new(&options, &ctx).unwrap_or_else(|e| {
         error!("Failed to load engine: {e}");
-        std::process::exit(1);
+        process::exit(1);
     });
 
     let input_infos = engine.get_input_dims();
@@ -92,8 +96,6 @@ fn main() {
             .collect()
     };
 
-    let ctx = CudaContext::new(0).expect("failed to create CUDA context");
-    unsafe { ctx.disable_event_tracking() };
     let stream = ctx.new_stream().expect("failed to create stream");
 
     let input_buf = stream.clone_htod(&host_input).expect("H2D failed");
