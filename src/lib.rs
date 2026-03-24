@@ -3,10 +3,7 @@
 //! Rust interface to TensorRT engines. Caller provides device memory
 //! and CUDA streams.
 
-use std::sync::Arc;
-
 use cudarc::driver::sys::{CUdeviceptr, CUstream};
-use cudarc::driver::CudaContext;
 use cxx::{Exception, UniquePtr};
 
 #[cxx::bridge]
@@ -118,20 +115,15 @@ pub struct BatchDims {
 /// TensorRT inference engine.
 pub struct Engine {
     inner: UniquePtr<ffi::Engine>,
-    // Prevents the CUcontext from being destroyed while TensorRT holds
-    // references to device resources. Required when event tracking is disabled.
-    _ctx: Arc<CudaContext>,
 }
 
 impl Engine {
-    /// Load a TensorRT engine. The CudaContext determines which device
-    /// the engine runs on and must outlive the engine.
-    pub fn new(options: &Options, ctx: &Arc<CudaContext>) -> Result<Self, Exception> {
+    /// Load a TensorRT engine. The caller must ensure the correct CUDA
+    /// device is current before calling this, and that the CUDA context
+    /// outlives the engine.
+    pub fn new(options: &Options) -> Result<Self, Exception> {
         let inner = ffi::load_engine(options)?;
-        Ok(Self {
-            inner,
-            _ctx: Arc::clone(ctx),
-        })
+        Ok(Self { inner })
     }
 
     /// Run inference synchronously. Blocks until complete.

@@ -49,7 +49,7 @@ fn main() {
         path: args.path.to_string_lossy().to_string(),
     };
 
-    let mut engine = Engine::new(&options, &ctx).unwrap_or_else(|e| {
+    let mut engine = Engine::new(&options).unwrap_or_else(|e| {
         error!("Failed to load engine: {e}");
         process::exit(1);
     });
