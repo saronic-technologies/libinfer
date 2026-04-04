@@ -21,6 +21,11 @@
         tensorrt = if system == "aarch64-linux" then jetpack-nixos.legacyPackages.aarch64-linux.cudaPackages.tensorrt else pkgs.cudaPackages.tensorrt;
         inherit (cudaPackages) cudatoolkit cudnn cuda_cudart;
 
+        python = pkgs.python3.withPackages (ps: with ps; [
+          numpy
+          onnx
+        ]);
+
         inputs = with pkgs; [
           bacon
           cmake
@@ -40,6 +45,7 @@
           spdlog
           fmt
           cxx-rs
+          python
         ];
 
         libs = pkgs.lib.makeLibraryPath (with pkgs; [

@@ -4,6 +4,7 @@
 #include <NvInferPluginUtils.h>
 #include <NvInferRuntimeBase.h>
 #include <fstream>
+#include <mutex>
 
 #include "libinfer/src/lib.rs.h"
 
@@ -61,28 +62,31 @@ std::unique_ptr<Engine> load_engine(const Options &options) {
   return engine;
 }
 
-Engine::Engine(const Options &options)
-    : kEnginePath(options.path) {
-  if (!spdlog::get("libinfer")) {
-    spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
-    spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
+static void init_logger() {
+  spdlog::set_pattern("%+", spdlog::pattern_time_type::utc);
+  spdlog::set_default_logger(spdlog::stderr_color_mt("libinfer"));
 
-    const char *rustLogLevel = getenv("RUST_LOG");
-    if (rustLogLevel == nullptr) {
+  const char *rustLogLevel = getenv("RUST_LOG");
+  if (rustLogLevel == nullptr) {
+    spdlog::set_level(spdlog::level::warn);
+  } else {
+    std::string level(rustLogLevel);
+    if (level == "error") {
+      spdlog::set_level(spdlog::level::err);
+    } else if (level == "warn") {
       spdlog::set_level(spdlog::level::warn);
-    } else {
-      std::string level(rustLogLevel);
-      if (level == "error") {
-        spdlog::set_level(spdlog::level::err);
-      } else if (level == "warn") {
-        spdlog::set_level(spdlog::level::warn);
-      } else if (level == "info") {
-        spdlog::set_level(spdlog::level::info);
-      } else if (level == "debug" || level == "trace") {
-        spdlog::set_level(spdlog::level::debug);
-      }
+    } else if (level == "info") {
+      spdlog::set_level(spdlog::level::info);
+    } else if (level == "debug" || level == "trace") {
+      spdlog::set_level(spdlog::level::debug);
     }
   }
+}
+
+Engine::Engine(const Options &options)
+    : kEnginePath(options.path) {
+  static std::once_flag logger_init;
+  std::call_once(logger_init, init_logger);
 }
 
 void Engine::load() {
@@ -142,12 +146,27 @@ void Engine::load() {
     mTensorMetadata.push_back(std::move(metadata));
 
     if (tensorType == TensorIOMode::kINPUT) {
-      mMinBatchSize =
+      int32_t minBatch =
           mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN).d[0];
-      mOptBatchSize =
+      int32_t optBatch =
           mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT).d[0];
-      mMaxBatchSize =
+      int32_t maxBatch =
           mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX).d[0];
+
+      if (mMinBatchSize == 0) {
+        mMinBatchSize = minBatch;
+        mOptBatchSize = optBatch;
+        mMaxBatchSize = maxBatch;
+      } else if (minBatch != mMinBatchSize || optBatch != mOptBatchSize ||
+                 maxBatch != mMaxBatchSize) {
+        throw std::runtime_error(
+            "Inconsistent batch profile across input tensors: '" +
+            metadata.name + "' has [" + std::to_string(minBatch) + "," +
+            std::to_string(optBatch) + "," + std::to_string(maxBatch) +
+            "] but expected [" + std::to_string(mMinBatchSize) + "," +
+            std::to_string(mOptBatchSize) + "," +
+            std::to_string(mMaxBatchSize) + "]");
+      }
     } else if (tensorType == TensorIOMode::kOUTPUT) {
       uint32_t outputLen = 1;
       for (int j = 1; j < tensorShape.nbDims; ++j) {

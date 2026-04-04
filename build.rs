@@ -50,7 +50,6 @@ fn main() {
     println!("cargo:rustc-link-lib=cudart");
     println!("cargo:rustc-link-lib=nvinfer");
     println!("cargo:rustc-link-lib=nvinfer_plugin");
-    println!("cargo:rustc-link-lib=nvonnxparser");
 
     println!("cargo:rerun-if-changed=src/engine.cpp");
     println!("cargo:rerun-if-changed=src/engine.h");

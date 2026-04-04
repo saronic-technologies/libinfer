@@ -52,6 +52,3 @@ path = "examples/benchmark.rs"
 name = "dynamic"
 path = "examples/dynamic.rs"
 
-[[example]]
-name = "functional_test"
-path = "examples/functional_test.rs"

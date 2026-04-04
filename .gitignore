@@ -1,7 +1,8 @@
 target/
 .vscode
-*.onnx
 *.engine
+!test/*.onnx
 .claude/
 .clangd
 .ccls-cache
+.direnv/

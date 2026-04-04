@@ -1,99 +1,91 @@
-# `libinfer`
-This library provides a simple Rust interface to a TensorRT engine using [cxx](https://cxx.rs/)
+# libinfer
 
-## Overview
-`libinfer` allows for seamless integration of TensorRT models into Rust applications with minimal overhead. The library handles the complex C++ interaction with TensorRT while exposing a simple, idiomatic Rust API.
+Rust interface to TensorRT engines via [cxx](https://cxx.rs/). Caller provides device memory and CUDA streams.
 
 ## Installation
-To use this library, you'll need:
-- CUDA and TensorRT installed on your system
-- Environment variables set properly:
-  - `TENSORRT_LIBRARIES`: Path to TensorRT libraries
-  - `CUDA_LIBRARIES`: Path to CUDA libraries
-  - `CUDA_INCLUDE_DIRS`: Path to CUDA include directories
 
-Add to your `Cargo.toml`:
+Requirements:
+- CUDA and TensorRT installed
+- Environment variables:
+  - `TENSORRT_LIBRARIES`: path to TensorRT libraries
+  - `CUDA_LIBRARIES`: path to CUDA libraries
+  - `CUDA_INCLUDE_DIRS`: path to CUDA include directories
+
 ```toml
 [dependencies]
-libinfer = "0.0.3"
+libinfer = "0.1.0"
 ```
 
+A Nix flake is provided for development. `nix develop` sets up all dependencies.
+
 ## Usage
-The goal of the API is to keep as much processing in Rust land as possible. Here is a sample usage:
+
+The API operates on raw CUDA device pointers and streams. The caller is responsible for
+device selection, memory allocation, and stream management.
 
 ```rust
+use cudarc::driver::CudaContext;
+use libinfer::{Engine, Options};
+
+// Set the CUDA device before loading the engine
+let ctx = CudaContext::new(0).expect("failed to create CUDA context");
+
 let options = Options {
-    path: "yolov8n.engine".into(),
-    device_index: 0,
+    path: "model.engine".into(),
 };
 let mut engine = Engine::new(&options).unwrap();
 
-// Get input dimensions of the engine as [Channels, Height, Width]
-let dims = engine.get_input_dims();
+// Query tensor metadata
+let inputs = engine.get_input_dims();
+let outputs = engine.get_output_dims();
+let batch = engine.get_batch_dims();
 
-// Construct a dummy input (uint8 or float32 depending on model)
-let input_size = dims.iter().fold(1, |acc, &e| acc * e as usize);
-let input = InputTensor {
-    name: "input".to_string();
-    data: vec![0u8; input_size];
+// Allocate device memory, run inference
+let stream = ctx.new_stream().unwrap();
+// ... allocate input_bufs, output_bufs on the device ...
 
-// Run inference
-let output = engine.pin_mut().infer(&input).unwrap();
-
-// Postprocess the output according to your model's output format
-// ...
+engine.infer(&input_ptrs, &output_ptrs, stream.cu_stream(), batch.opt).unwrap();
 ```
 
-This library is intended to be used with pre-built TensorRT engines created by the Python API or the `trtexec` CLI tool for the target device.
-
-## Features
-- Support for both fixed and dynamic batch sizes
-- Automatic handling of different input data types (UINT8, FP32)
-- Direct access to model dimensions and parameters
-- Error handling via Rust's `Result` type
-- Logging integration with `RUST_LOG` environment variable
+Input and output pointer arrays must match the order returned by `get_input_dims()` / `get_output_dims()`.
 
 ## Examples
-Check the `examples/` directory for working examples:
-- `basic.rs`: Simple inference example
-- `benchmark.rs`: Performance benchmarking with various batch sizes
-- `dynamic.rs`: Working with dynamic batch sizes
-- `functional_test.rs`: Testing correctness of model outputs
 
-Run an example with:
 ```
 cargo run --example basic -- --path /path/to/model.engine
+cargo run --example benchmark -- --path /path/to/model.engine
+cargo run --example dynamic -- --path /path/to/model.engine
 ```
 
-### Example Requirements
-- You must provide your own TensorRT engine files (.engine)
-- For the functional_test example, you'll need input.bin and features.txt files
-- To create engine files, use NVIDIA's TensorRT tools such as:
-  - TensorRT Python API
-  - trtexec command-line tool
-  - ONNX -> TensorRT conversion tools
+## Testing
 
-See the documentation in each example file for specific requirements.
+Tests require a CUDA-capable GPU. Generate test models and build TensorRT engines:
 
-## Synchronization Model
+```bash
+python3 test/generate_models.py
 
-No `cudaStreamSynchronize` is needed between H2D copies and `enqueueV3`. This is safe for several reasons:
+trtexec --onnx=test/test_dynamic.onnx --saveEngine=test/test_dynamic.engine \
+    --minShapes=input:1x4 --optShapes=input:4x4 --maxShapes=input:8x4
 
-1. **Stream ordering** — all H2D copies and `enqueueV3` are submitted to the same CUDA stream, which guarantees in-order execution. Copies complete before kernels begin.
-2. **Pageable host memory** — input data comes from Rust `Vec<u8>` on the regular heap (not pinned memory). `cudaMemcpyAsync` with pageable memory blocks the CPU until the copy is staged, making a subsequent sync redundant.
-3. **TensorRT auxiliary streams** — TRT may use auxiliary streams internally during `enqueueV3`, but it inserts event synchronizations so all auxiliary work waits on the main stream at entry and the main stream waits on all auxiliary work at exit.
-4. **CPU-side calls** — `setInputShape`, `allInputDimensionsSpecified`, and `setTensorAddress` are pure CPU operations with no stream interaction.
+trtexec --onnx=test/test_multi_input.onnx --saveEngine=test/test_multi_input.engine \
+    --minShapes=input_a:1x3,input_b:1x5 --optShapes=input_a:4x3,input_b:4x5 \
+    --maxShapes=input_a:8x3,input_b:8x5
+```
 
-A post-inference `cudaStreamSynchronize` is still required to ensure D2H output copies are complete before reading results. `infer()` handles this internally.
+Then run:
 
-## Current Limitations
-- The underlying engine code is not threadsafe (and the Rust binding does not implement `Sync`)
-- Engine instances are `Send` but not `Sync`
-- Input and output data transfers happen on the CPU-GPU boundary
+```
+cargo test
+```
 
-## Future Work
-- Allow passing device pointers and CUDA streams for stream synchronization events
-- Async execution support
+## Caveats
+
+- `Engine` is `Send` but not `Sync`. `infer` takes `&mut self`. For concurrent inference on the same model, create separate `Engine` instances.
+- The caller must ensure the CUDA context outlives the engine, particularly when cudarc's event tracking is disabled.
+- Only the batch dimension is dynamic. Non-batch dynamic shapes are yet not supported.
+- Engine files are not portable across TensorRT versions or GPU architectures. Rebuild from ONNX for each target.
+- CUDA graphs are not yet supported.
 
 ## Credits
-Much of the C++ code is based on the [tensorrt-cpp-api](https://github.com/cyrusbehr/tensorrt-cpp-api) repo.
+
+C++ code originally based on [tensorrt-cpp-api](https://github.com/cyrusbehr/tensorrt-cpp-api).

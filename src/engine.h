@@ -1,6 +1,7 @@
 #pragma once
 
 #include "NvInfer.h"
+#include <cstdlib>
 #include <cuda_runtime.h>
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
