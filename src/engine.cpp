@@ -84,7 +84,7 @@ static void init_logger() {
 }
 
 Engine::Engine(const Options &options)
-    : kEnginePath(options.path) {
+    : kEnginePath(options.path), kMaxThreads(options.max_threads) {
   static std::once_flag logger_init;
   std::call_once(logger_init, init_logger);
 }
@@ -111,6 +111,12 @@ void Engine::load() {
   mRuntime = std::unique_ptr<IRuntime>{createInferRuntime(mLogger)};
   if (!mRuntime) {
     throw std::runtime_error("Runtime not initialized");
+  }
+
+  if (kMaxThreads > 0) {
+    if (!mRuntime->setMaxThreads(kMaxThreads)) {
+      spdlog::warn("Failed to set TensorRT max threads to {}", kMaxThreads);
+    }
   }
 
   // Caller is responsible for setting the CUDA device via CudaContext

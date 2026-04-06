@@ -26,6 +26,9 @@ mod ffi {
     #[derive(Debug, Clone)]
     struct Options {
         path: String,
+        /// Maximum number of TensorRT worker threads. 0 means use TensorRT
+        /// default (`hardware_concurrency - 1`).
+        max_threads: u32,
     }
 
     unsafe extern "C++" {

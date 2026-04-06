@@ -112,6 +112,7 @@ private:
   Logger mLogger;
 
   const std::string kEnginePath;
+  const uint32_t kMaxThreads;
 };
 
 std::unique_ptr<Engine> load_engine(const Options &options);
