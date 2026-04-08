@@ -95,6 +95,7 @@ pub mod ffi {
         /// Refer to output from e.g. `nvidia-smi` for this value.
         /// A value of 0 typically refers to the first GPU.
         device_index: u32,
+
     }
 
     extern "Rust" {

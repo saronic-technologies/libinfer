@@ -3,12 +3,17 @@
 #include <NvInferRuntimeBase.h>
 #include <NvOnnxParser.h>
 #include <algorithm>
+#include <dirent.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <random>
+#include <sched.h>
+#include <set>
 #include <stdexcept>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <unordered_map>
 
 #include "libinfer/src/lib.rs.h"
@@ -18,6 +23,73 @@
 
 
 using namespace nvinfer1;
+
+// Enumerate all thread IDs in the current process via /proc/self/task/.
+static std::set<pid_t> enumerate_threads() {
+  std::set<pid_t> tids;
+  DIR *dir = opendir("/proc/self/task");
+  if (!dir)
+    return tids;
+  while (struct dirent *entry = readdir(dir)) {
+    if (entry->d_name[0] == '.')
+      continue;
+    tids.insert(static_cast<pid_t>(std::atoi(entry->d_name)));
+  }
+  closedir(dir);
+  return tids;
+}
+
+// Format a cpu_set_t as a human-readable list like "0-3,8-11".
+static std::string format_cpuset(const cpu_set_t &cpuset) {
+  std::string result;
+  int count = CPU_COUNT(&cpuset);
+  int ncpus = static_cast<int>(sysconf(_SC_NPROCESSORS_CONF));
+  bool in_range = false;
+  int range_start = -1;
+
+  auto flush_range = [&](int end) {
+    if (!result.empty())
+      result += ",";
+    if (range_start == end)
+      result += std::to_string(range_start);
+    else
+      result += std::to_string(range_start) + "-" + std::to_string(end);
+  };
+
+  for (int i = 0; i < ncpus; ++i) {
+    if (CPU_ISSET(i, &cpuset)) {
+      if (!in_range) {
+        range_start = i;
+        in_range = true;
+      }
+    } else if (in_range) {
+      flush_range(i - 1);
+      in_range = false;
+    }
+  }
+  if (in_range)
+    flush_range(ncpus - 1);
+
+  return result + " (" + std::to_string(count) + " cpus)";
+}
+
+// Log thread name and affinity for a given TID.
+static void log_thread_info(pid_t tid, const std::string &label) {
+  // Read thread name from /proc/self/task/<tid>/comm
+  std::string name = "<unknown>";
+  std::string comm_path = "/proc/self/task/" + std::to_string(tid) + "/comm";
+  std::ifstream comm_file(comm_path);
+  if (comm_file.is_open()) {
+    std::getline(comm_file, name);
+  }
+
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  sched_getaffinity(tid, sizeof(cpuset), &cpuset);
+
+  spdlog::info("  [{}] tid={} name={} affinity={}", label, tid, name,
+               format_cpuset(cpuset));
+}
 
 // Helper function to convert from our enum to TensorRT's enum.
 TensorDataType toTensorDataType(DataType dt) {
@@ -98,6 +170,7 @@ Engine::Engine(const Options &options)
       }
     }
   }
+
 }
 
 Engine::~Engine() {
@@ -361,10 +434,124 @@ rust::Vec<OutputTensor> Engine::infer(const rust::Vec<InputTensor> &input) {
     }
   }
   
-  // Run inference
+  // Run inference.
   bool status = mContext->enqueueV3(mInferenceCudaStream);
   if (!status) {
     throw std::runtime_error("Inference execution failed");
+  }
+
+  // TRT creates hardware_concurrency-1 worker threads that spin-wait with
+  // sched_yield. These threads have consecutive TIDs and inherit the name of
+  // the thread that triggered their creation. We detect them by finding the
+  // longest run of consecutive TIDs sharing the same name, then lower their
+  // scheduling priority so they don't starve application threads.
+  if (mFirstInfer) {
+    mFirstInfer = false;
+
+    static std::once_flag census_flag;
+    std::call_once(census_flag, [this]() {
+      auto all_tids = enumerate_threads();
+      int ncpus = static_cast<int>(sysconf(_SC_NPROCESSORS_CONF));
+      int expected_workers = ncpus - 1;
+
+      spdlog::info("=== TRT worker detection ({} threads, expecting ~{} "
+                   "workers) ===",
+                   all_tids.size(), expected_workers);
+
+      // Build sorted vector of (tid, name) pairs
+      struct ThreadInfo {
+        pid_t tid;
+        std::string name;
+      };
+      std::vector<ThreadInfo> threads;
+      for (pid_t tid : all_tids) {
+        std::string name;
+        std::string path =
+            "/proc/self/task/" + std::to_string(tid) + "/comm";
+        std::ifstream f(path);
+        if (f.is_open()) {
+          std::getline(f, name);
+        }
+        threads.push_back({tid, name});
+      }
+
+      // Sort by TID (enumerate_threads returns a set, already sorted)
+      std::sort(threads.begin(), threads.end(),
+                [](const ThreadInfo &a, const ThreadInfo &b) {
+                  return a.tid < b.tid;
+                });
+
+      // Find the longest run of consecutive TIDs sharing the same name,
+      // excluding wrapper threads (name contains "wrapp" from the
+      // truncated process name e.g. ".torchyd2-wrapp").
+      size_t best_start = 0, best_len = 0;
+      size_t run_start = 0;
+      for (size_t i = 1; i < threads.size(); ++i) {
+        bool consecutive = (threads[i].tid == threads[i - 1].tid + 1);
+        bool same_name = (threads[i].name == threads[run_start].name);
+        bool is_wrapper =
+            threads[i].name.find("wrapp") != std::string::npos;
+        if (consecutive && same_name && !is_wrapper) {
+          size_t run_len = i - run_start + 1;
+          if (run_len > best_len) {
+            best_start = run_start;
+            best_len = run_len;
+          }
+        } else {
+          run_start = i;
+        }
+      }
+
+      spdlog::info("  Longest consecutive-TID run: {} threads (TID {}-{}), "
+                   "name=\"{}\"",
+                   best_len,
+                   best_len > 0 ? threads[best_start].tid : 0,
+                   best_len > 0 ? threads[best_start + best_len - 1].tid : 0,
+                   best_len > 0 ? threads[best_start].name : "");
+
+      // Only act if the run is close to expected_workers (within ±4)
+      bool is_trt_pool =
+          best_len >= static_cast<size_t>(std::max(1, expected_workers - 4));
+
+      if (is_trt_pool) {
+        std::vector<pid_t> trt_tids;
+        for (size_t i = best_start; i < best_start + best_len; ++i) {
+          trt_tids.push_back(threads[i].tid);
+        }
+
+        // Pin TRT workers to the last 5 CPUs, freeing the rest for
+        // application threads (preprocessing, tracking, depth, etc.).
+        constexpr int kTrtCpus = 6;
+        int pin_start = std::max(0, ncpus - kTrtCpus);
+        cpu_set_t trt_cpuset;
+        CPU_ZERO(&trt_cpuset);
+        for (int c = pin_start; c < ncpus; ++c) {
+          CPU_SET(c, &trt_cpuset);
+        }
+
+        spdlog::info("  Identified {} TRT worker threads, pinning to CPUs "
+                     "{}-{}",
+                     trt_tids.size(), pin_start, ncpus - 1);
+
+        for (pid_t tid : trt_tids) {
+          int ret = sched_setaffinity(tid, sizeof(trt_cpuset), &trt_cpuset);
+          if (ret != 0) {
+            spdlog::warn("  sched_setaffinity(tid={}) failed: {}", tid,
+                         strerror(errno));
+          }
+
+          log_thread_info(tid, ret == 0 ? "pinned" : "FAILED");
+        }
+      } else {
+        spdlog::info("  No TRT worker pool detected (longest run {} < "
+                     "expected {})",
+                     best_len, expected_workers);
+        // Log all threads for debugging
+        for (const auto &t : threads) {
+          log_thread_info(t.tid, t.name);
+        }
+      }
+    });
   }
   
   // Collect output tensors

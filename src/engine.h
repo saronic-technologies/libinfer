@@ -128,9 +128,13 @@ private:
 
   cudaStream_t mInferenceCudaStream = nullptr;
 
+  // First-infer thread pinning: TRT creates worker threads lazily during
+  // the first enqueueV3, not during engine load. We detect and pin them here.
+  bool mFirstInfer = true;
+
   // Options values.
   const std::string kEnginePath;
-  const uint32_t kDeviceIndex; 
+  const uint32_t kDeviceIndex;
 };
 
 // Rust friends.
