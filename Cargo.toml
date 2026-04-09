@@ -1,6 +1,6 @@
 [package]
 name = "libinfer"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Rust interface to TensorRT for high-performance GPU inference"
 authors = ["Saronic Technologies"]
@@ -34,6 +34,7 @@ approx = "0.5.1"
 clap = { version = "4.5.27", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+libc = "0.2"
 rand = "0.8.5"
 
 [package.metadata.docs.rs]

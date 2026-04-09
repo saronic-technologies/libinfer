@@ -33,6 +33,43 @@ fn bytes_to_f32(v: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+// --- Shared logger ---
+
+#[test]
+fn test_multiple_engines_no_duplicate_logger_warning() {
+    use std::io::Read;
+    use std::os::unix::io::FromRawFd;
+
+    let mut fds = [0i32; 2];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    let read_fd = fds[0];
+    let write_fd = fds[1];
+
+    let old_stderr = unsafe { libc::dup(2) };
+    assert!(old_stderr >= 0);
+    assert_eq!(unsafe { libc::dup2(write_fd, 2) }, 2);
+
+    let ctx = cuda_ctx();
+    let _engine1 = load_engine("test_dynamic.engine", &ctx);
+    let _engine2 = load_engine("test_multi_input.engine", &ctx);
+    let _engine3 = load_engine("test_dynamic.engine", &ctx);
+
+    assert_eq!(unsafe { libc::dup2(old_stderr, 2) }, 2);
+    unsafe {
+        libc::close(old_stderr);
+        libc::close(write_fd);
+    }
+
+    let mut captured = String::new();
+    let mut reader = unsafe { std::fs::File::from_raw_fd(read_fd) };
+    reader.read_to_string(&mut captured).ok();
+
+    assert!(
+        !captured.contains("logger passed into createInferRuntime differs"),
+        "duplicate logger warning detected in stderr:\n{captured}"
+    );
+}
+
 // --- Error handling ---
 
 #[test]
