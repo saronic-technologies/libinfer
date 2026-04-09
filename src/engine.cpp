@@ -10,6 +10,11 @@
 
 using namespace nvinfer1;
 
+static Logger &getGlobalLogger() {
+  static Logger instance;
+  return instance;
+}
+
 static size_t getDataTypeSize(DataType dt) {
   switch (dt) {
   case DataType::kFLOAT:
@@ -108,7 +113,7 @@ void Engine::load() {
     throw std::runtime_error("Unable to read engine file");
   }
 
-  mRuntime = std::unique_ptr<IRuntime>{createInferRuntime(mLogger)};
+  mRuntime = std::unique_ptr<IRuntime>{createInferRuntime(getGlobalLogger())};
   if (!mRuntime) {
     throw std::runtime_error("Runtime not initialized");
   }

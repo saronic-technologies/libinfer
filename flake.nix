@@ -41,6 +41,7 @@
           tensorrt
           rustc
           cargo
+          clippy
           rustfmt
           spdlog
           fmt
