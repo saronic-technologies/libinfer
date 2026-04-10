@@ -282,30 +282,33 @@ void Engine::enqueue(const uint64_t *input_ptrs, size_t num_inputs,
     checkCudaErrorCode(
         cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
-    if (!mContext->enqueueV3(stream)) {
-      cudaGraph_t discarded;
-      cudaStreamEndCapture(stream, &discarded);
-      throw std::runtime_error(
-          "Inference execution failed during graph capture");
+    bool enqueueOk = mContext->enqueueV3(stream);
+
+    cudaGraph_t graph = nullptr;
+    cudaError_t endStatus = cudaStreamEndCapture(stream, &graph);
+
+    if (!enqueueOk || endStatus != cudaSuccess || graph == nullptr) {
+      if (graph) cudaGraphDestroy(graph);
+      spdlog::warn("CUDA graph capture failed for batch_size={}, "
+                   "disabling graphs for this engine", batch_size);
+      mCudaGraphCacheSize = -1;
+      // Fall through to plain enqueueV3 below
+    } else {
+      cudaGraphExec_t graphExec;
+      checkCudaErrorCode(cudaGraphInstantiate(&graphExec, graph, 0));
+      cudaGraphDestroy(graph);
+
+      CachedGraph cached;
+      cached.exec = graphExec;
+      cached.batchSize = batch_size;
+      cached.inputPtrs.assign(input_ptrs, input_ptrs + num_inputs);
+      cached.outputPtrs.assign(output_ptrs, output_ptrs + num_outputs);
+      cached.lastUsed = ++mGraphCacheTick;
+      mGraphCache.push_back(std::move(cached));
+
+      checkCudaErrorCode(cudaGraphLaunch(graphExec, stream));
+      return;
     }
-
-    cudaGraph_t graph;
-    checkCudaErrorCode(cudaStreamEndCapture(stream, &graph));
-
-    cudaGraphExec_t graphExec;
-    checkCudaErrorCode(cudaGraphInstantiate(&graphExec, graph, 0));
-    cudaGraphDestroy(graph);
-
-    CachedGraph cached;
-    cached.exec = graphExec;
-    cached.batchSize = batch_size;
-    cached.inputPtrs.assign(input_ptrs, input_ptrs + num_inputs);
-    cached.outputPtrs.assign(output_ptrs, output_ptrs + num_outputs);
-    cached.lastUsed = ++mGraphCacheTick;
-    mGraphCache.push_back(std::move(cached));
-
-    checkCudaErrorCode(cudaGraphLaunch(graphExec, stream));
-    return;
   }
 
   if (!mContext->enqueueV3(stream)) {

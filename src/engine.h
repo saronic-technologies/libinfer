@@ -112,7 +112,7 @@ private:
   Logger mLogger;
 
   const std::string kEnginePath;
-  const int32_t mCudaGraphCacheSize; // <0 disabled, 0 unlimited, >0 max entries
+  int32_t mCudaGraphCacheSize; // <0 disabled, 0 unlimited, >0 max entries
 
   struct CachedGraph {
     cudaGraphExec_t exec;
