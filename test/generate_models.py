@@ -115,6 +115,56 @@ def make_multi_input_model():
     print(f"wrote {path}")
 
 
+def make_bench_model(num_layers=16, hidden_dim=512):
+    """Deep MLP for benchmarking CUDA graph capture/replay overhead.
+
+    Graph: input -> (matmul -> relu) * (N-1) -> matmul -> output
+    All weight matrices are hidden_dim x hidden_dim with small random values.
+    The many sequential ops generate enough kernel launches that the CPU-side
+    dispatch cost becomes measurable vs. a single graph launch.
+
+    Build TensorRT engine:
+
+      trtexec --onnx=test/bench_deep_mlp.onnx --saveEngine=test/bench_deep_mlp.engine \\
+              --minShapes=input:1x512 --optShapes=input:16x512 --maxShapes=input:64x512
+    """
+    rng = np.random.default_rng(42)
+    nodes = []
+    initializers = []
+
+    prev = "input"
+    for i in range(num_layers):
+        w_name = f"W_{i}"
+        mm_out = f"mm_{i}"
+
+        W = rng.standard_normal((hidden_dim, hidden_dim)).astype(np.float32) * 0.02
+        initializers.append(numpy_helper.from_array(W, name=w_name))
+
+        is_last = i == num_layers - 1
+        out_name = "output" if is_last else mm_out
+        nodes.append(helper.make_node("MatMul", [prev, w_name], [out_name]))
+
+        if not is_last:
+            relu_out = f"relu_{i}"
+            nodes.append(helper.make_node("Relu", [mm_out], [relu_out]))
+            prev = relu_out
+
+    graph = helper.make_graph(
+        nodes,
+        "bench_deep_mlp",
+        [helper.make_tensor_value_info("input", TensorProto.FLOAT, ["batch", hidden_dim])],
+        [helper.make_tensor_value_info("output", TensorProto.FLOAT, ["batch", hidden_dim])],
+        initializer=initializers,
+    )
+
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    onnx.checker.check_model(model)
+    path = SCRIPT_DIR / "bench_deep_mlp.onnx"
+    onnx.save(model, str(path))
+    print(f"wrote {path} ({num_layers} layers, hidden_dim={hidden_dim})")
+
+
 if __name__ == "__main__":
     make_dynamic_model()
     make_multi_input_model()
+    make_bench_model()

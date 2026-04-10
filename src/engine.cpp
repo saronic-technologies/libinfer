@@ -3,6 +3,7 @@
 #include <NvInferPlugin.h>
 #include <NvInferPluginUtils.h>
 #include <NvInferRuntimeBase.h>
+#include <algorithm>
 #include <fstream>
 #include <mutex>
 
@@ -89,9 +90,16 @@ static void init_logger() {
 }
 
 Engine::Engine(const Options &options)
-    : kEnginePath(options.path) {
+    : kEnginePath(options.path),
+      mCudaGraphCacheSize(options.cuda_graph_cache_size) {
   static std::once_flag logger_init;
   std::call_once(logger_init, init_logger);
+}
+
+Engine::~Engine() {
+  for (auto &entry : mGraphCache) {
+    cudaGraphExecDestroy(entry.exec);
+  }
 }
 
 void Engine::load() {
@@ -241,6 +249,63 @@ void Engine::enqueue(const uint64_t *input_ptrs, size_t num_inputs,
 
   if (!mContext->allInputDimensionsSpecified()) {
     throw std::runtime_error("Error, not all required dimensions specified.");
+  }
+
+  if (mCudaGraphCacheSize >= 0) {
+    // Linear scan for a matching (batch_size, pointers) entry
+    for (auto &entry : mGraphCache) {
+      if (entry.batchSize == batch_size &&
+          std::equal(input_ptrs, input_ptrs + num_inputs,
+                     entry.inputPtrs.begin()) &&
+          std::equal(output_ptrs, output_ptrs + num_outputs,
+                     entry.outputPtrs.begin())) {
+        entry.lastUsed = ++mGraphCacheTick;
+        checkCudaErrorCode(cudaGraphLaunch(entry.exec, stream));
+        return;
+      }
+    }
+
+    // Cache miss — evict LRU if at capacity
+    if (mCudaGraphCacheSize > 0 &&
+        mGraphCache.size() >= static_cast<size_t>(mCudaGraphCacheSize)) {
+      auto lru = std::min_element(
+          mGraphCache.begin(), mGraphCache.end(),
+          [](const auto &a, const auto &b) {
+            return a.lastUsed < b.lastUsed;
+          });
+      spdlog::info("Evicting CUDA graph for batch_size={}", lru->batchSize);
+      cudaGraphExecDestroy(lru->exec);
+      mGraphCache.erase(lru);
+    }
+
+    spdlog::info("Capturing CUDA graph for batch_size={}", batch_size);
+    checkCudaErrorCode(
+        cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+
+    if (!mContext->enqueueV3(stream)) {
+      cudaGraph_t discarded;
+      cudaStreamEndCapture(stream, &discarded);
+      throw std::runtime_error(
+          "Inference execution failed during graph capture");
+    }
+
+    cudaGraph_t graph;
+    checkCudaErrorCode(cudaStreamEndCapture(stream, &graph));
+
+    cudaGraphExec_t graphExec;
+    checkCudaErrorCode(cudaGraphInstantiate(&graphExec, graph, 0));
+    cudaGraphDestroy(graph);
+
+    CachedGraph cached;
+    cached.exec = graphExec;
+    cached.batchSize = batch_size;
+    cached.inputPtrs.assign(input_ptrs, input_ptrs + num_inputs);
+    cached.outputPtrs.assign(output_ptrs, output_ptrs + num_outputs);
+    cached.lastUsed = ++mGraphCacheTick;
+    mGraphCache.push_back(std::move(cached));
+
+    checkCudaErrorCode(cudaGraphLaunch(graphExec, stream));
+    return;
   }
 
   if (!mContext->enqueueV3(stream)) {

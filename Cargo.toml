@@ -53,3 +53,7 @@ path = "examples/benchmark.rs"
 name = "dynamic"
 path = "examples/dynamic.rs"
 
+[[example]]
+name = "bench_cuda_graphs"
+path = "examples/bench_cuda_graphs.rs"
+
