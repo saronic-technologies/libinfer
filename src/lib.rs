@@ -26,6 +26,9 @@ mod ffi {
     #[derive(Debug, Clone)]
     struct Options {
         path: String,
+        /// Enable CUDA graph capture/replay. Negative = disabled, 0 = unlimited,
+        /// positive = max number of cached graphs (LRU eviction).
+        cuda_graph_cache_size: i32,
     }
 
     unsafe extern "C++" {
@@ -73,6 +76,24 @@ mod ffi {
 }
 
 pub use ffi::{Options, TensorDataType, TensorInfo};
+
+impl Options {
+    /// Create engine options.
+    ///
+    /// `cuda_graph_cache_size`:
+    /// - `None` — CUDA graphs disabled
+    /// - `Some(0)` — unlimited cache
+    /// - `Some(n)` — cache at most `n` graphs (LRU eviction)
+    pub fn new(path: String, cuda_graph_cache_size: Option<u32>) -> Self {
+        Self {
+            path,
+            cuda_graph_cache_size: match cuda_graph_cache_size {
+                None => -1,
+                Some(n) => n as i32,
+            },
+        }
+    }
+}
 
 impl TensorDataType {
     /// Size in bytes of a single element of this type.

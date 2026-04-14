@@ -45,9 +45,7 @@ fn main() {
     let ctx = CudaContext::new(args.device as usize).expect("failed to create CUDA context");
     unsafe { ctx.disable_event_tracking() };
 
-    let options = Options {
-        path: args.path.to_string_lossy().to_string(),
-    };
+    let options = Options::new(args.path.to_string_lossy().to_string(), None);
 
     let mut engine = Engine::new(&options).unwrap_or_else(|e| {
         error!("Failed to load engine: {e}");

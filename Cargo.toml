@@ -1,6 +1,6 @@
 [package]
 name = "libinfer"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Rust interface to TensorRT for high-performance GPU inference"
 authors = ["Saronic Technologies"]
@@ -52,4 +52,8 @@ path = "examples/benchmark.rs"
 [[example]]
 name = "dynamic"
 path = "examples/dynamic.rs"
+
+[[example]]
+name = "bench_cuda_graphs"
+path = "examples/bench_cuda_graphs.rs"
 

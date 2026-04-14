@@ -17,9 +17,7 @@ fn cuda_ctx() -> Arc<CudaContext> {
 fn load_engine(name: &str, ctx: &Arc<CudaContext>) -> Engine {
     let _ = ctx; // ensure CUDA context is current
     let path = test_dir().join(name);
-    let options = Options {
-        path: path.to_string_lossy().to_string(),
-    };
+    let options = Options::new(path.to_string_lossy().to_string(), None);
     Engine::new(&options).expect("failed to load engine")
 }
 
@@ -76,9 +74,7 @@ fn test_multiple_engines_no_duplicate_logger_warning() {
 fn test_load_nonexistent_path() {
     let ctx = cuda_ctx();
     let _ = &ctx;
-    let options = Options {
-        path: "/nonexistent/path/model.engine".to_string(),
-    };
+    let options = Options::new("/nonexistent/path/model.engine".to_string(), None);
     assert!(Engine::new(&options).is_err());
 }
 
@@ -87,9 +83,7 @@ fn test_load_invalid_engine() {
     let ctx = cuda_ctx();
     let _ = &ctx;
     let path = test_dir().join("test_dynamic.onnx"); // valid file, not a TRT engine
-    let options = Options {
-        path: path.to_string_lossy().to_string(),
-    };
+    let options = Options::new(path.to_string_lossy().to_string(), None);
     assert!(Engine::new(&options).is_err());
 }
 
@@ -341,4 +335,236 @@ fn test_multi_input_batch() {
     // row 1
     assert_relative_eq!(output[2], 0.0, epsilon = 1e-3);
     assert_relative_eq!(output[3], 10.0, epsilon = 1e-3);
+}
+
+// --- CUDA graph tests ---
+// These tests prove that graph replay produces bit-identical results to
+// the normal enqueueV3 path, and that pointer changes trigger recapture
+// rather than silently writing to stale addresses.
+
+fn load_engine_with_graphs(name: &str, ctx: &Arc<CudaContext>) -> Engine {
+    let _ = ctx;
+    let path = test_dir().join(name);
+    let options = Options::new(path.to_string_lossy().to_string(), Some(0));
+    Engine::new(&options).expect("failed to load engine")
+}
+
+/// Run the same input through both the non-graph and graph paths and
+/// assert the outputs are identical. The graph engine runs twice: once
+/// to capture (cold), once to replay (hot). Both must match the baseline.
+#[test]
+fn test_cuda_graph_matches_baseline() {
+    let ctx = cuda_ctx();
+    let stream = ctx.new_stream().expect("failed to create stream");
+
+    let input = f32_to_bytes(&[1.0, 2.0, 3.0, 4.0]);
+    let input_buf = stream.clone_htod(&input).expect("H2D failed");
+
+    // Baseline: no graphs
+    let mut baseline_engine = load_engine("test_dynamic.engine", &ctx);
+    let mut baseline_out = stream.alloc_zeros::<u8>(2 * 4).expect("alloc failed");
+    {
+        let (ip, _) = input_buf.device_ptr(&stream);
+        let (op, _) = baseline_out.device_ptr_mut(&stream);
+        baseline_engine
+            .infer(&[ip], &[op], stream.cu_stream(), 1)
+            .expect("baseline inference failed");
+    }
+    let baseline = bytes_to_f32(&stream.clone_dtoh(&baseline_out).expect("D2H failed"));
+
+    // Graph path: capture pass then replay pass
+    let mut graph_engine = load_engine_with_graphs("test_dynamic.engine", &ctx);
+    let mut graph_out = stream.alloc_zeros::<u8>(2 * 4).expect("alloc failed");
+    let (ip, _) = input_buf.device_ptr(&stream);
+    let (op, _) = graph_out.device_ptr_mut(&stream);
+
+    for pass in ["capture", "replay"] {
+        graph_engine
+            .infer(&[ip], &[op], stream.cu_stream(), 1)
+            .unwrap_or_else(|e| panic!("{pass} failed: {e}"));
+
+        let result = bytes_to_f32(&stream.clone_dtoh(&graph_out).expect("D2H failed"));
+        assert_eq!(
+            result, baseline,
+            "graph {pass} output differs from baseline: {result:?} vs {baseline:?}"
+        );
+    }
+}
+
+/// Same as above but with batch=3 — proves the graph captures the
+/// correct batch dimension, not just batch=1.
+#[test]
+fn test_cuda_graph_matches_baseline_batched() {
+    let ctx = cuda_ctx();
+    let stream = ctx.new_stream().expect("failed to create stream");
+
+    let single = [1.0f32, 2.0, 3.0, 4.0];
+    let input = f32_to_bytes(&single.repeat(3));
+    let input_buf = stream.clone_htod(&input).expect("H2D failed");
+
+    let mut baseline_engine = load_engine("test_dynamic.engine", &ctx);
+    let mut baseline_out = stream.alloc_zeros::<u8>(3 * 2 * 4).expect("alloc failed");
+    {
+        let (ip, _) = input_buf.device_ptr(&stream);
+        let (op, _) = baseline_out.device_ptr_mut(&stream);
+        baseline_engine
+            .infer(&[ip], &[op], stream.cu_stream(), 3)
+            .expect("baseline failed");
+    }
+    let baseline = bytes_to_f32(&stream.clone_dtoh(&baseline_out).expect("D2H failed"));
+
+    let mut graph_engine = load_engine_with_graphs("test_dynamic.engine", &ctx);
+    let mut graph_out = stream.alloc_zeros::<u8>(3 * 2 * 4).expect("alloc failed");
+    let (ip, _) = input_buf.device_ptr(&stream);
+    let (op, _) = graph_out.device_ptr_mut(&stream);
+
+    for pass in ["capture", "replay"] {
+        graph_engine
+            .infer(&[ip], &[op], stream.cu_stream(), 3)
+            .unwrap_or_else(|e| panic!("{pass} failed: {e}"));
+
+        let result = bytes_to_f32(&stream.clone_dtoh(&graph_out).expect("D2H failed"));
+        assert_eq!(
+            result, baseline,
+            "graph {pass} (batch=3) differs from baseline: {result:?} vs {baseline:?}"
+        );
+    }
+}
+
+/// Runs batch sizes 1, 4, 8 then repeats them. The second pass hits
+/// cached graphs. Each result is compared against the non-graph baseline
+/// for that batch size.
+#[test]
+fn test_cuda_graph_multiple_batch_sizes() {
+    let ctx = cuda_ctx();
+    let stream = ctx.new_stream().expect("failed to create stream");
+
+    let single = [1.0f32, 2.0, 3.0, 4.0];
+    let input = f32_to_bytes(&single.repeat(8));
+    let input_buf = stream.clone_htod(&input).expect("H2D failed");
+
+    // Collect baselines for each batch size
+    let mut baseline_engine = load_engine("test_dynamic.engine", &ctx);
+    let mut baseline_out = stream.alloc_zeros::<u8>(8 * 2 * 4).expect("alloc failed");
+    let (ip, _) = input_buf.device_ptr(&stream);
+    let (bop, _) = baseline_out.device_ptr_mut(&stream);
+
+    let mut baselines = std::collections::HashMap::new();
+    for &bs in &[1u32, 4, 8] {
+        baseline_engine
+            .infer(&[ip], &[bop], stream.cu_stream(), bs)
+            .expect("baseline failed");
+        let out = bytes_to_f32(&stream.clone_dtoh(&baseline_out).expect("D2H failed"));
+        baselines.insert(bs, out[..bs as usize * 2].to_vec());
+    }
+
+    // Graph engine: first pass captures, second replays
+    let mut graph_engine = load_engine_with_graphs("test_dynamic.engine", &ctx);
+    let mut graph_out = stream.alloc_zeros::<u8>(8 * 2 * 4).expect("alloc failed");
+    let (gop, _) = graph_out.device_ptr_mut(&stream);
+
+    for &bs in &[1u32, 4, 8, 1, 4, 8] {
+        graph_engine
+            .infer(&[ip], &[gop], stream.cu_stream(), bs)
+            .unwrap_or_else(|e| panic!("batch_size={bs} failed: {e}"));
+
+        let result = bytes_to_f32(&stream.clone_dtoh(&graph_out).expect("D2H failed"));
+        let result = &result[..bs as usize * 2];
+        let expected = &baselines[&bs];
+        assert_eq!(
+            result, expected.as_slice(),
+            "batch_size={bs} graph output differs from baseline"
+        );
+    }
+}
+
+/// Proves pointer validation works: allocate new buffers (different
+/// device addresses), run inference. If the graph wasn't recaptured,
+/// it would write to the old output buffer and the new one would
+/// remain zeroed.
+#[test]
+fn test_cuda_graph_pointer_invalidation() {
+    let ctx = cuda_ctx();
+    let mut engine = load_engine_with_graphs("test_dynamic.engine", &ctx);
+    let stream = ctx.new_stream().expect("failed to create stream");
+
+    let input_data = f32_to_bytes(&[1.0, 2.0, 3.0, 4.0]);
+
+    // First allocation — captures graph targeting buf1
+    let input_buf1 = stream.clone_htod(&input_data).expect("H2D failed");
+    let mut output_buf1 = stream.alloc_zeros::<u8>(2 * 4).expect("alloc failed");
+    {
+        let (ip, _) = input_buf1.device_ptr(&stream);
+        let (op, _) = output_buf1.device_ptr_mut(&stream);
+        engine
+            .infer(&[ip], &[op], stream.cu_stream(), 1)
+            .expect("capture failed");
+    }
+
+    // Second allocation — different device addresses
+    let input_buf2 = stream.clone_htod(&input_data).expect("H2D failed");
+    let mut output_buf2 = stream.alloc_zeros::<u8>(2 * 4).expect("alloc failed");
+
+    // Verify output_buf2 starts at zero (so a stale graph would be caught)
+    let zeros = bytes_to_f32(&stream.clone_dtoh(&output_buf2).expect("D2H failed"));
+    assert_eq!(zeros, vec![0.0, 0.0], "output_buf2 should start zeroed");
+
+    {
+        let (ip, _) = input_buf2.device_ptr(&stream);
+        let (op, _) = output_buf2.device_ptr_mut(&stream);
+        engine
+            .infer(&[ip], &[op], stream.cu_stream(), 1)
+            .expect("recapture failed");
+    }
+
+    // If recapture happened, output_buf2 has the correct result.
+    // If it didn't, the graph wrote to output_buf1 and buf2 is still zero.
+    let result = bytes_to_f32(&stream.clone_dtoh(&output_buf2).expect("D2H failed"));
+    assert_relative_eq!(result[0], 4.5, epsilon = 1e-3);
+    assert_relative_eq!(result[1], 4.5, epsilon = 1e-3);
+}
+
+/// Multi-input model: verifies graph capture/replay with two input
+/// tensors by comparing against the non-graph baseline.
+#[test]
+fn test_cuda_graph_multi_input() {
+    let ctx = cuda_ctx();
+    let stream = ctx.new_stream().expect("failed to create stream");
+
+    let input_a = f32_to_bytes(&[1.0, 2.0, 3.0]);
+    let input_b = f32_to_bytes(&[1.0, 1.0, 1.0, 1.0, 1.0]);
+    let buf_a = stream.clone_htod(&input_a).expect("H2D failed");
+    let buf_b = stream.clone_htod(&input_b).expect("H2D failed");
+
+    // Baseline
+    let mut baseline_engine = load_engine("test_multi_input.engine", &ctx);
+    let mut baseline_out = stream.alloc_zeros::<u8>(2 * 4).expect("alloc failed");
+    {
+        let (pa, _) = buf_a.device_ptr(&stream);
+        let (pb, _) = buf_b.device_ptr(&stream);
+        let (op, _) = baseline_out.device_ptr_mut(&stream);
+        baseline_engine
+            .infer(&[pa, pb], &[op], stream.cu_stream(), 1)
+            .expect("baseline failed");
+    }
+    let baseline = bytes_to_f32(&stream.clone_dtoh(&baseline_out).expect("D2H failed"));
+
+    // Graph path
+    let mut graph_engine = load_engine_with_graphs("test_multi_input.engine", &ctx);
+    let mut graph_out = stream.alloc_zeros::<u8>(2 * 4).expect("alloc failed");
+    let (pa, _) = buf_a.device_ptr(&stream);
+    let (pb, _) = buf_b.device_ptr(&stream);
+    let (op, _) = graph_out.device_ptr_mut(&stream);
+
+    for pass in ["capture", "replay"] {
+        graph_engine
+            .infer(&[pa, pb], &[op], stream.cu_stream(), 1)
+            .unwrap_or_else(|e| panic!("{pass} failed: {e}"));
+
+        let result = bytes_to_f32(&stream.clone_dtoh(&graph_out).expect("D2H failed"));
+        assert_eq!(
+            result, baseline,
+            "graph {pass} (multi-input) differs from baseline: {result:?} vs {baseline:?}"
+        );
+    }
 }

@@ -65,7 +65,7 @@ public:
 class Engine {
 public:
   Engine(const Options &options);
-  ~Engine() = default;
+  ~Engine();
 
   void load();
 
@@ -112,6 +112,18 @@ private:
   Logger mLogger;
 
   const std::string kEnginePath;
+  int32_t mCudaGraphCacheSize; // <0 disabled, 0 unlimited, >0 max entries
+
+  struct CachedGraph {
+    cudaGraphExec_t exec;
+    uint32_t batchSize;
+    std::vector<uint64_t> inputPtrs;
+    std::vector<uint64_t> outputPtrs;
+    uint64_t lastUsed;
+  };
+
+  std::vector<CachedGraph> mGraphCache;
+  uint64_t mGraphCacheTick = 0;
 };
 
 std::unique_ptr<Engine> load_engine(const Options &options);
