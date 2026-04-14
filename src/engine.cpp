@@ -278,7 +278,14 @@ void Engine::enqueue(const uint64_t *input_ptrs, size_t num_inputs,
       mGraphCache.erase(lru);
     }
 
-    spdlog::info("Capturing CUDA graph for batch_size={}", batch_size);
+    // Warm-up: flush deferred shape updates before capturing. TRT does
+    // CPU-side shape work on the first enqueueV3 after a shape change.
+    // Capturing that is unsafe.
+    if (!mContext->enqueueV3(stream)) {
+      throw std::runtime_error("Warm-up enqueueV3 failed before graph capture");
+    }
+    checkCudaErrorCode(cudaStreamSynchronize(stream));
+
     checkCudaErrorCode(
         cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
