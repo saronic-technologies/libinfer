@@ -287,7 +287,7 @@ void Engine::enqueue(const uint64_t *input_ptrs, size_t num_inputs,
     checkCudaErrorCode(cudaStreamSynchronize(stream));
 
     checkCudaErrorCode(
-        cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+        cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
 
     bool enqueueOk = mContext->enqueueV3(stream);
 
