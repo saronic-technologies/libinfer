@@ -11,6 +11,7 @@
 
 #include "rust/cxx.h"
 
+struct EngineMemory;
 struct Options;
 struct TensorInfo;
 enum class TensorDataType : uint8_t;
@@ -72,8 +73,8 @@ public:
   // Enqueue inference with caller-provided device pointers and stream.
   // Synchronizes the stream before returning.
   void infer(const uint64_t *input_ptrs, size_t num_inputs,
-             const uint64_t *output_ptrs, size_t num_outputs,
-             uint64_t stream, uint32_t batch_size);
+             const uint64_t *output_ptrs, size_t num_outputs, uint64_t stream,
+             uint32_t batch_size);
 
   // Same as infer() but does not synchronize. Caller is responsible.
   void infer_async(const uint64_t *input_ptrs, size_t num_inputs,
@@ -86,6 +87,7 @@ public:
   uint32_t get_output_len() const;
   size_t get_num_inputs() const;
   size_t get_num_outputs() const;
+  EngineMemory get_memory_breakdown() const;
 
 private:
   struct TensorMetadata {

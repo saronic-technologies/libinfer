@@ -3,8 +3,12 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     flake-utils.url = "github:numtide/flake-utils";
     jetpack-nixos.url = "github:anduril/jetpack-nixos";
+    pre-commit-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
-  outputs = { nixpkgs, flake-utils, jetpack-nixos, ... }:
+  outputs = { nixpkgs, flake-utils, jetpack-nixos, pre-commit-hooks, ... }:
     let
       supported-systems = with flake-utils.lib.system; [
         x86_64-linux
@@ -37,6 +41,7 @@
           nixpkgs-fmt
           openssl
           pkg-config
+          pre-commit
           cudatoolkit
           tensorrt
           rustc
@@ -67,6 +72,25 @@
         includes = pkgs.lib.makeSearchPath "include" [
           pkgs.glibc.dev
         ];
+
+        pre-commit-checks = pre-commit-hooks.lib.${system}.run {
+          src = ./.;
+          hooks = {
+            clippy = {
+              name = "clippy";
+              enable = true;
+              entry = "cargo clippy --all-targets";
+              types = [ "rust" ];
+              pass_filenames = false;
+              language = "system";
+            };
+            rustfmt.enable = true;
+            clang-format = {
+              enable = true;
+              types_or = [ "c" "c++" ];
+            };
+          };
+        };
       in
       {
         devShells = {
@@ -83,6 +107,7 @@
             shellHook = ''
               export CC="clang"
               export CXX="clang++"
+              ${pre-commit-checks.shellHook}
             '';
 
           };

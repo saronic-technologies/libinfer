@@ -11,8 +11,8 @@ use libinfer::{Engine, Options};
 use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
-use tracing::{error, info, warn, Level};
 use tracing::subscriber::set_global_default;
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[derive(Parser, Debug)]

@@ -28,6 +28,33 @@ mod ffi {
         path: String,
     }
 
+    /// Per-engine device memory breakdown.
+    ///
+    /// Covers memory the TensorRT runtime tracks explicitly for a single
+    /// engine and execution context on the default optimization profile.
+    /// Does not include weight allocations the runtime makes outside the
+    /// streaming accounting, CUDA context overhead, or memory held by
+    /// other subsystems such as cv-cuda or NVENC. Use a driver-level
+    /// query for the full device total.
+    #[derive(Debug, Clone, Copy)]
+    struct EngineMemory {
+        /// Activation and scratch buffer bytes required per execution
+        /// context.
+        activation_scratch: u64,
+
+        /// Weight bytes marked streamable at engine build time. Zero
+        /// unless weight streaming was enabled during build.
+        streamable_weights: u64,
+
+        /// Weight bytes currently budgeted to reside on the device.
+        /// Equals `streamable_weights` when streaming is disabled.
+        resident_weights: u64,
+
+        /// Additional per-execution-context scratch required while
+        /// weight streaming is active. Zero when streaming is disabled.
+        streaming_scratch: u64,
+    }
+
     unsafe extern "C++" {
         include!("libinfer/src/engine.h");
 
@@ -41,6 +68,7 @@ mod ffi {
         fn get_output_len(self: &Engine) -> u32;
         fn get_num_inputs(self: &Engine) -> usize;
         fn get_num_outputs(self: &Engine) -> usize;
+        fn get_memory_breakdown(self: &Engine) -> EngineMemory;
 
         /// # Safety
         ///
@@ -72,7 +100,7 @@ mod ffi {
     }
 }
 
-pub use ffi::{Options, TensorDataType, TensorInfo};
+pub use ffi::{EngineMemory, Options, TensorDataType, TensorInfo};
 
 impl TensorDataType {
     /// Size in bytes of a single element of this type.
@@ -199,6 +227,11 @@ impl Engine {
     /// Output length (elements) of the first output tensor.
     pub fn get_output_len(&self) -> u32 {
         self.inner.get_output_len()
+    }
+
+    /// Device memory breakdown for this engine.
+    pub fn memory(&self) -> EngineMemory {
+        self.inner.get_memory_breakdown()
     }
 }
 
