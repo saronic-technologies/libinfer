@@ -88,8 +88,7 @@ static void init_logger() {
   }
 }
 
-Engine::Engine(const Options &options)
-    : kEnginePath(options.path) {
+Engine::Engine(const Options &options) : kEnginePath(options.path) {
   static std::once_flag logger_init;
   std::call_once(logger_init, init_logger);
 }
@@ -126,8 +125,8 @@ void Engine::load() {
     throw std::runtime_error("Engine deserialization failed");
   }
 
-  mContext = std::unique_ptr<IExecutionContext>(
-      mEngine->createExecutionContext());
+  mContext =
+      std::unique_ptr<IExecutionContext>(mEngine->createExecutionContext());
   if (!mContext) {
     throw std::runtime_error("Could not create execution context");
   }
@@ -152,11 +151,14 @@ void Engine::load() {
 
     if (tensorType == TensorIOMode::kINPUT) {
       int32_t minBatch =
-          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN).d[0];
+          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMIN)
+              .d[0];
       int32_t optBatch =
-          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT).d[0];
+          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kOPT)
+              .d[0];
       int32_t maxBatch =
-          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX).d[0];
+          mEngine->getProfileShape(tensorName, 0, OptProfileSelector::kMAX)
+              .d[0];
 
       if (mMinBatchSize == 0) {
         mMinBatchSize = minBatch;
@@ -200,14 +202,14 @@ void Engine::enqueue(const uint64_t *input_ptrs, size_t num_inputs,
   }
 
   if (num_inputs != get_num_inputs()) {
-    throw std::runtime_error(
-        "Expected " + std::to_string(get_num_inputs()) +
-        " input pointers, got " + std::to_string(num_inputs));
+    throw std::runtime_error("Expected " + std::to_string(get_num_inputs()) +
+                             " input pointers, got " +
+                             std::to_string(num_inputs));
   }
   if (num_outputs != get_num_outputs()) {
-    throw std::runtime_error(
-        "Expected " + std::to_string(get_num_outputs()) +
-        " output pointers, got " + std::to_string(num_outputs));
+    throw std::runtime_error("Expected " + std::to_string(get_num_outputs()) +
+                             " output pointers, got " +
+                             std::to_string(num_outputs));
   }
 
   size_t inputIdx = 0;
@@ -223,15 +225,17 @@ void Engine::enqueue(const uint64_t *input_ptrs, size_t num_inputs,
         throw std::runtime_error("Failed to set input shape for tensor: " +
                                  meta.name);
       }
-      if (!mContext->setTensorAddress(meta.name.c_str(),
-                                      reinterpret_cast<void *>(input_ptrs[inputIdx]))) {
+      if (!mContext->setTensorAddress(
+              meta.name.c_str(),
+              reinterpret_cast<void *>(input_ptrs[inputIdx]))) {
         throw std::runtime_error("Unable to set tensor address for: " +
                                  meta.name);
       }
       inputIdx++;
     } else {
-      if (!mContext->setTensorAddress(meta.name.c_str(),
-                                      reinterpret_cast<void *>(output_ptrs[outputIdx]))) {
+      if (!mContext->setTensorAddress(
+              meta.name.c_str(),
+              reinterpret_cast<void *>(output_ptrs[outputIdx]))) {
         throw std::runtime_error("Unable to set tensor address for: " +
                                  meta.name);
       }
@@ -329,4 +333,13 @@ size_t Engine::get_num_outputs() const {
     }
   }
   return count;
+}
+
+EngineMemory Engine::get_memory_breakdown() const {
+  return EngineMemory{
+      static_cast<uint64_t>(mEngine->getDeviceMemorySizeV2()),
+      static_cast<uint64_t>(mEngine->getStreamableWeightsSize()),
+      static_cast<uint64_t>(mEngine->getWeightStreamingBudgetV2()),
+      static_cast<uint64_t>(mEngine->getWeightStreamingScratchMemorySize()),
+  };
 }

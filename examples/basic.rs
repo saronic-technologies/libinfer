@@ -11,8 +11,8 @@ use cudarc::driver::{CudaContext, DevicePtr, DevicePtrMut};
 use libinfer::{Engine, Options};
 use std::path::PathBuf;
 use std::process;
-use tracing::{error, info, Level};
 use tracing::subscriber::set_global_default;
+use tracing::{error, info, Level};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[derive(Parser, Debug)]
