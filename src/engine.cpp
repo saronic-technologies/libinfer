@@ -336,10 +336,25 @@ size_t Engine::get_num_outputs() const {
 }
 
 EngineMemory Engine::get_memory_breakdown() const {
+  // getStreamableWeightsSize returns 0 for engines not built with
+  // BuilderFlag::kWEIGHT_STREAMING. Calling the V2 budget or scratch queries
+  // on such an engine logs a TRT API-usage error. Skip them when streaming
+  // is disabled.
+  uint64_t streamable =
+      static_cast<uint64_t>(mEngine->getStreamableWeightsSize());
+  uint64_t resident_weights = 0;
+  uint64_t streaming_scratch = 0;
+  if (streamable > 0) {
+    resident_weights =
+        static_cast<uint64_t>(mEngine->getWeightStreamingBudgetV2());
+    streaming_scratch =
+        static_cast<uint64_t>(mEngine->getWeightStreamingScratchMemorySize());
+  }
+
   return EngineMemory{
       static_cast<uint64_t>(mEngine->getDeviceMemorySizeV2()),
-      static_cast<uint64_t>(mEngine->getStreamableWeightsSize()),
-      static_cast<uint64_t>(mEngine->getWeightStreamingBudgetV2()),
-      static_cast<uint64_t>(mEngine->getWeightStreamingScratchMemorySize()),
+      streamable,
+      resident_weights,
+      streaming_scratch,
   };
 }
