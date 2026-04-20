@@ -193,6 +193,15 @@ fn test_dynamic_batch_dims() {
     assert_eq!(outputs[0].dtype, TensorDataType::FP32);
     assert_eq!(outputs[0].byte_size(), 2 * 4);
     assert_eq!(engine.get_output_len(), 2);
+
+    let mem = engine.memory();
+    println!(
+        "test_dynamic.engine memory: activation_scratch={} streamable_weights={} resident_weights={} streaming_scratch={}",
+        mem.activation_scratch,
+        mem.streamable_weights,
+        mem.resident_weights,
+        mem.streaming_scratch,
+    );
 }
 
 #[test]
@@ -278,6 +287,15 @@ fn test_multi_input_metadata() {
     assert_eq!(batch.min, 1);
     assert_eq!(batch.opt, 4);
     assert_eq!(batch.max, 8);
+
+    let mem = engine.memory();
+    println!(
+        "test_multi_input.engine memory: activation_scratch={} streamable_weights={} resident_weights={} streaming_scratch={}",
+        mem.activation_scratch,
+        mem.streamable_weights,
+        mem.resident_weights,
+        mem.streaming_scratch,
+    );
 }
 
 #[test]
