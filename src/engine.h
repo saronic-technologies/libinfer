@@ -108,10 +108,11 @@ private:
   int32_t mOptBatchSize = 0;
   int32_t mMaxBatchSize = 0;
 
-  std::unique_ptr<nvinfer1::IRuntime> mRuntime;
+  // IRuntime is process-global (getGlobalRuntime in engine.cpp). It must
+  // outlive every ICudaEngine created from it, so keep it as a function-local
+  // static that destructs after all Engines have dropped.
   std::unique_ptr<nvinfer1::ICudaEngine> mEngine;
   std::unique_ptr<nvinfer1::IExecutionContext> mContext;
-  Logger mLogger;
 
   const std::string kEnginePath;
 };

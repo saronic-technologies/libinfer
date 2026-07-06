@@ -15,6 +15,30 @@ static Logger &getGlobalLogger() {
   return instance;
 }
 
+// Process-global IRuntime shared across all Engines. TensorRT best practice is
+// one IRuntime per process; creating one per engine duplicates internal state
+// (plugin factories, tactic sources, per-context module dedup cache) and
+// pressures the shared CUDA primary context. Empirically, 3+ concurrent
+// per-Engine IRuntimes on a single primary context provokes
+// CUDA_ERROR_ILLEGAL_ADDRESS mid-run.
+static IRuntime *getGlobalRuntime() {
+  static std::unique_ptr<IRuntime> runtime{
+      createInferRuntime(getGlobalLogger())};
+  return runtime.get();
+}
+
+// Plugin registry init is a one-shot process initializer per NVIDIA guidance.
+// Calling it per-Engine (a) races on the global registry when Engines are
+// constructed concurrently and (b) previously leaked per-Engine logger
+// pointers into the global registry, which could dangle after the Engine
+// dropped. Route all engines through the shared global logger and gate the
+// call itself with std::call_once.
+static void initPluginsOnce() {
+  static std::once_flag flag;
+  std::call_once(flag,
+                 [] { initLibNvInferPlugins(&getGlobalLogger(), ""); });
+}
+
 static size_t getDataTypeSize(DataType dt) {
   switch (dt) {
   case DataType::kFLOAT:
@@ -94,7 +118,7 @@ Engine::Engine(const Options &options) : kEnginePath(options.path) {
 }
 
 void Engine::load() {
-  initLibNvInferPlugins(&mLogger, "");
+  initPluginsOnce();
 
   std::ifstream file(kEnginePath, std::ios::binary | std::ios::ate);
   if (!file.is_open()) {
@@ -112,15 +136,15 @@ void Engine::load() {
     throw std::runtime_error("Unable to read engine file");
   }
 
-  mRuntime = std::unique_ptr<IRuntime>{createInferRuntime(getGlobalLogger())};
-  if (!mRuntime) {
+  IRuntime *runtime = getGlobalRuntime();
+  if (!runtime) {
     throw std::runtime_error("Runtime not initialized");
   }
 
   // Caller is responsible for setting the CUDA device via CudaContext
   // before constructing the engine.
   mEngine = std::unique_ptr<ICudaEngine>(
-      mRuntime->deserializeCudaEngine(buffer.data(), buffer.size()));
+      runtime->deserializeCudaEngine(buffer.data(), buffer.size()));
   if (!mEngine) {
     throw std::runtime_error("Engine deserialization failed");
   }
