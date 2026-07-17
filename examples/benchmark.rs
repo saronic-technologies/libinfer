@@ -25,6 +25,9 @@ struct Args {
 
     #[arg(short, long, value_name = "DEVICE", default_value_t = 0)]
     device: u32,
+    /// Capture and replay a CUDA graph for each batch/pointer combination.
+    #[arg(long)]
+    cuda_graph: bool,
 }
 
 fn main() {
@@ -88,9 +91,15 @@ fn main() {
 
     info!("Warming up...");
     for _ in 0..1024 {
-        engine
-            .infer(&input_ptrs, &output_ptrs, stream.cu_stream(), batch_size)
-            .unwrap();
+        if args.cuda_graph {
+            engine
+                .infer_cuda_graph(&input_ptrs, &output_ptrs, stream.cu_stream(), batch_size)
+                .unwrap();
+        } else {
+            engine
+                .infer(&input_ptrs, &output_ptrs, stream.cu_stream(), batch_size)
+                .unwrap();
+        }
     }
 
     info!("Running {} inference iterations...", args.iterations);
@@ -99,9 +108,15 @@ fn main() {
 
     for i in 0..args.iterations {
         let start = Instant::now();
-        engine
-            .infer(&input_ptrs, &output_ptrs, stream.cu_stream(), batch_size)
-            .unwrap();
+        if args.cuda_graph {
+            engine
+                .infer_cuda_graph(&input_ptrs, &output_ptrs, stream.cu_stream(), batch_size)
+                .unwrap();
+        } else {
+            engine
+                .infer(&input_ptrs, &output_ptrs, stream.cu_stream(), batch_size)
+                .unwrap();
+        }
         let elapsed = start.elapsed();
         latencies.push(elapsed);
         total_time += elapsed;

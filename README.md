@@ -84,7 +84,14 @@ cargo test
 - The caller must ensure the CUDA context outlives the engine, particularly when cudarc's event tracking is disabled.
 - Only the batch dimension is dynamic. Non-batch dynamic shapes are yet not supported.
 - Engine files are not portable across TensorRT versions or GPU architectures. Rebuild from ONNX for each target.
-- CUDA graphs are not yet supported.
+- `infer_cuda_graph` and `infer_cuda_graph_async` capture and cache a graph for each
+  batch size and device-pointer combination. Keep those device buffers alive while
+  using the cached graph, and call `clear_cuda_graph_cache` before retiring them.
+To compare regular execution with CUDA graph replay:
+
+```
+cargo run --release --example benchmark -- --path /path/to/model.engine --cuda-graph
+```
 
 ## Credits
 

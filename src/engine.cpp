@@ -269,6 +269,113 @@ void Engine::infer_async(const uint64_t *input_ptrs, size_t num_inputs,
           batch_size);
 }
 
+void Engine::enqueue_cuda_graph(const uint64_t *input_ptrs, size_t num_inputs,
+                                const uint64_t *output_ptrs, size_t num_outputs,
+                                cudaStream_t stream, uint32_t batch_size,
+                                bool synchronize) {
+  if (batch_size < static_cast<uint32_t>(mMinBatchSize) ||
+      batch_size > static_cast<uint32_t>(mMaxBatchSize)) {
+    throw std::runtime_error(
+        "Batch size " + std::to_string(batch_size) + " is outside [" +
+        std::to_string(mMinBatchSize) + "," + std::to_string(mMaxBatchSize) +
+        "]");
+  }
+  if (num_inputs != get_num_inputs()) {
+    throw std::runtime_error("Expected " + std::to_string(get_num_inputs()) +
+                             " input pointers, got " +
+                             std::to_string(num_inputs));
+  }
+  if (num_outputs != get_num_outputs()) {
+    throw std::runtime_error("Expected " + std::to_string(get_num_outputs()) +
+                             " output pointers, got " +
+                             std::to_string(num_outputs));
+  }
+
+  GraphKey key;
+  key.batch_size = batch_size;
+  key.input_ptrs.reserve(num_inputs);
+  key.output_ptrs.reserve(num_outputs);
+  for (size_t i = 0; i < num_inputs; ++i) {
+    key.input_ptrs.push_back(input_ptrs[i]);
+  }
+  for (size_t i = 0; i < num_outputs; ++i) {
+    key.output_ptrs.push_back(output_ptrs[i]);
+  }
+
+  auto graph = mCudaGraphs.find(key);
+  if (graph == mCudaGraphs.end()) {
+    cudaGraph_t captured_graph = nullptr;
+    cudaGraphExec_t executable = nullptr;
+    bool capturing = false;
+
+    try {
+      checkCudaErrorCode(
+          cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+      capturing = true;
+      enqueue(input_ptrs, num_inputs, output_ptrs, num_outputs, stream,
+              batch_size);
+      checkCudaErrorCode(cudaStreamEndCapture(stream, &captured_graph));
+      capturing = false;
+      checkCudaErrorCode(cudaGraphInstantiate(
+          &executable, captured_graph, nullptr, nullptr, 0));
+
+      auto instance = std::make_unique<GraphInstance>();
+      instance->graph = captured_graph;
+      instance->executable = executable;
+      captured_graph = nullptr;
+      executable = nullptr;
+
+      graph = mCudaGraphs.emplace(std::move(key), std::move(instance)).first;
+    } catch (...) {
+      if (capturing) {
+        cudaGraph_t discarded_graph = nullptr;
+        cudaStreamEndCapture(stream, &discarded_graph);
+        if (discarded_graph != nullptr) {
+          cudaGraphDestroy(discarded_graph);
+        }
+      }
+      if (executable != nullptr) {
+        cudaGraphExecDestroy(executable);
+      }
+      if (captured_graph != nullptr) {
+        cudaGraphDestroy(captured_graph);
+      }
+      throw;
+    }
+  }
+
+  checkCudaErrorCode(cudaGraphLaunch(graph->second->executable, stream));
+  if (synchronize) {
+    checkCudaErrorCode(cudaStreamSynchronize(stream));
+  }
+}
+
+void Engine::infer_cuda_graph(const uint64_t *input_ptrs, size_t num_inputs,
+                              const uint64_t *output_ptrs, size_t num_outputs,
+                              uint64_t stream, uint32_t batch_size) {
+  enqueue_cuda_graph(input_ptrs, num_inputs, output_ptrs, num_outputs,
+                     reinterpret_cast<cudaStream_t>(stream), batch_size, true);
+}
+
+void Engine::infer_cuda_graph_async(const uint64_t *input_ptrs,
+                                    size_t num_inputs,
+                                    const uint64_t *output_ptrs,
+                                    size_t num_outputs, uint64_t stream,
+                                    uint32_t batch_size) {
+  enqueue_cuda_graph(input_ptrs, num_inputs, output_ptrs, num_outputs,
+                     reinterpret_cast<cudaStream_t>(stream), batch_size, false);
+}
+
+void Engine::clear_cuda_graph_cache() { mCudaGraphs.clear(); }
+
+Engine::GraphInstance::~GraphInstance() {
+  if (executable != nullptr) {
+    cudaGraphExecDestroy(executable);
+  }
+  if (graph != nullptr) {
+    cudaGraphDestroy(graph);
+  }
+}
 rust::Vec<TensorInfo> Engine::get_input_dims() const {
   rust::Vec<TensorInfo> result;
   for (const auto &meta : mTensorMetadata) {

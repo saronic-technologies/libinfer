@@ -97,6 +97,30 @@ mod ffi {
             stream: u64,
             batch_size: u32,
         ) -> Result<()>;
+        /// Capture and replay a CUDA graph for this batch and device-pointer
+        /// set. The graph is cached until `clear_cuda_graph_cache` is called.
+        unsafe fn infer_cuda_graph(
+            self: Pin<&mut Engine>,
+            input_ptrs: *const u64,
+            num_inputs: usize,
+            output_ptrs: *const u64,
+            num_outputs: usize,
+            stream: u64,
+            batch_size: u32,
+        ) -> Result<()>;
+
+        /// Same as `infer_cuda_graph`, but does not synchronize the stream.
+        unsafe fn infer_cuda_graph_async(
+            self: Pin<&mut Engine>,
+            input_ptrs: *const u64,
+            num_inputs: usize,
+            output_ptrs: *const u64,
+            num_outputs: usize,
+            stream: u64,
+            batch_size: u32,
+        ) -> Result<()>;
+
+        fn clear_cuda_graph_cache(self: Pin<&mut Engine>);
     }
 }
 
@@ -192,6 +216,53 @@ impl Engine {
                 batch_size,
             )
         }
+    }
+    /// Capture and replay a CUDA graph for this batch and device-pointer set.
+    ///
+    /// The graph is cached by batch size and device pointers. Keep those
+    /// device buffers alive until `clear_cuda_graph_cache` is called.
+    pub fn infer_cuda_graph(
+        &mut self,
+        inputs: &[CUdeviceptr],
+        outputs: &[CUdeviceptr],
+        stream: CUstream,
+        batch_size: u32,
+    ) -> Result<(), Exception> {
+        unsafe {
+            self.inner.pin_mut().infer_cuda_graph(
+                inputs.as_ptr(),
+                inputs.len(),
+                outputs.as_ptr(),
+                outputs.len(),
+                stream as u64,
+                batch_size,
+            )
+        }
+    }
+
+    /// Same as `infer_cuda_graph`, but does not synchronize the stream.
+    pub fn infer_cuda_graph_async(
+        &mut self,
+        inputs: &[CUdeviceptr],
+        outputs: &[CUdeviceptr],
+        stream: CUstream,
+        batch_size: u32,
+    ) -> Result<(), Exception> {
+        unsafe {
+            self.inner.pin_mut().infer_cuda_graph_async(
+                inputs.as_ptr(),
+                inputs.len(),
+                outputs.as_ptr(),
+                outputs.len(),
+                stream as u64,
+                batch_size,
+            )
+        }
+    }
+
+    /// Discard all cached CUDA graphs before retiring their device buffers.
+    pub fn clear_cuda_graph_cache(&mut self) {
+        self.inner.pin_mut().clear_cuda_graph_cache();
     }
 
     /// Get input tensor metadata.
