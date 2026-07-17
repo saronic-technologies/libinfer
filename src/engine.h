@@ -3,11 +3,13 @@
 #include "NvInfer.h"
 #include <cstdlib>
 #include <cuda_runtime.h>
+#include <map>
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <string>
 #include <vector>
+#include <tuple>
 
 #include "rust/cxx.h"
 
@@ -80,6 +82,21 @@ public:
   void infer_async(const uint64_t *input_ptrs, size_t num_inputs,
                    const uint64_t *output_ptrs, size_t num_outputs,
                    uint64_t stream, uint32_t batch_size);
+  // Captures and replays a CUDA graph for the given batch and device
+  // pointers. The graph is cached by batch size and pointer addresses.
+  // Synchronizes the stream before returning.
+  void infer_cuda_graph(const uint64_t *input_ptrs, size_t num_inputs,
+                        const uint64_t *output_ptrs, size_t num_outputs,
+                        uint64_t stream, uint32_t batch_size);
+
+  // Same as infer_cuda_graph() but does not synchronize.
+  void infer_cuda_graph_async(const uint64_t *input_ptrs, size_t num_inputs,
+                              const uint64_t *output_ptrs, size_t num_outputs,
+                              uint64_t stream, uint32_t batch_size);
+
+  // Discards all captured graphs. Call this after retiring the device buffers
+  // used to capture them.
+  void clear_cuda_graph_cache();
 
   rust::Vec<TensorInfo> get_input_dims() const;
   rust::Vec<TensorInfo> get_output_dims() const;
@@ -101,6 +118,28 @@ private:
   void enqueue(const uint64_t *input_ptrs, size_t num_inputs,
                const uint64_t *output_ptrs, size_t num_outputs,
                cudaStream_t stream, uint32_t batch_size);
+  struct GraphKey {
+    uint32_t batch_size;
+    std::vector<uint64_t> input_ptrs;
+    std::vector<uint64_t> output_ptrs;
+
+    bool operator<(const GraphKey &other) const {
+      return std::tie(batch_size, input_ptrs, output_ptrs) <
+             std::tie(other.batch_size, other.input_ptrs, other.output_ptrs);
+    }
+  };
+
+  struct GraphInstance {
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t executable = nullptr;
+
+    ~GraphInstance();
+  };
+
+  void enqueue_cuda_graph(const uint64_t *input_ptrs, size_t num_inputs,
+                          const uint64_t *output_ptrs, size_t num_outputs,
+                          cudaStream_t stream, uint32_t batch_size,
+                          bool synchronize);
 
   std::vector<TensorMetadata> mTensorMetadata;
   std::vector<uint32_t> mOutputLengths;
@@ -114,6 +153,7 @@ private:
   Logger mLogger;
 
   const std::string kEnginePath;
+  std::map<GraphKey, std::unique_ptr<GraphInstance>> mCudaGraphs;
 };
 
 std::unique_ptr<Engine> load_engine(const Options &options);
